@@ -17,6 +17,13 @@
 //#include "BlockTransfer.h"
 #include "BlockTransferService.h"
 
+#if 0
+#define DEBUG(...) { printf(__VA_ARGS__); }
+#else
+#define DEBUG(...) /* nothing */
+#endif
+
+
 const uint8_t EnvoyServiceBaseUUID[LENGTH_OF_LONG_UUID] = {
     0x6E, 0x40, 0x00, 0x00, 0xB5, 0xA3, 0xF3, 0x93,
     0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E,
