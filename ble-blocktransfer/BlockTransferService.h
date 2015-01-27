@@ -94,7 +94,7 @@ private:
 
     block_t* writeBlock;
     block_t writeBlockData;
-    uint8_t receiveBlockBuffer[1000];
+    uint8_t receiveBlockBuffer[200];
 
     block_t* readBlock;
     block_t readBlockData;

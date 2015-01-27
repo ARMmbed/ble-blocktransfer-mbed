@@ -23,32 +23,8 @@
 #define DEBUG(...) /* nothing */
 #endif
 
-
-const uint8_t EnvoyServiceBaseUUID[LENGTH_OF_LONG_UUID] = {
-    0x6E, 0x40, 0x00, 0x00, 0xB5, 0xA3, 0xF3, 0x93,
-    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E,
-};
-const uint16_t EnvoyServiceShortUUID               = 0xFF00;
-const uint16_t EnvoyServiceReadCharacteristicShortUUID  = 0xFF02;
-const uint16_t EnvoyServiceWriteCharacteristicShortUUID = 0xFF03;
-
-const uint8_t EnvoyServiceUUID[LENGTH_OF_LONG_UUID] = {
-    0x6E, 0x40, (uint8_t)(EnvoyServiceShortUUID >> 8), (uint8_t)(EnvoyServiceShortUUID & 0xFF), 0xB5, 0xA3, 0xF3, 0x93,
-    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E,
-};
-const uint8_t EnvoyServiceUUID_reversed[LENGTH_OF_LONG_UUID] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
-    0x93, 0xF3, 0xA3, 0xB5, (uint8_t)(EnvoyServiceShortUUID & 0xFF), (uint8_t)(EnvoyServiceShortUUID >> 8), 0x40, 0x6E
-};
-const uint8_t EnvoyServiceWriteCharacteristicUUID[LENGTH_OF_LONG_UUID] = {
-    0x6E, 0x40, (uint8_t)(EnvoyServiceReadCharacteristicShortUUID >> 8), (uint8_t)(EnvoyServiceReadCharacteristicShortUUID & 0xFF), 0xB5, 0xA3, 0xF3, 0x93,
-    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E,
-};
-const uint8_t EnvoyServiceReadCharacteristicUUID[LENGTH_OF_LONG_UUID] = {
-    0x6E, 0x40, (uint8_t)(EnvoyServiceWriteCharacteristicShortUUID >> 8), (uint8_t)(EnvoyServiceWriteCharacteristicShortUUID & 0xFF), 0xB5, 0xA3, 0xF3, 0x93,
-    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E,
-};
-
+const uint16_t EnvoyServiceWriteCharacteristicShortUUID = 0x0001;
+const uint16_t EnvoyServiceReadCharacteristicShortUUID  = 0x0002;
 
 
 BlockTransferService::BlockTransferService(BLEDevice &_ble, block_server_handler_t _readHandler, block_server_handler_t _writeHander) :
@@ -69,13 +45,11 @@ BlockTransferService::BlockTransferService(BLEDevice &_ble, block_server_handler
                                         GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE | 
                                         GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE_WITHOUT_RESPONSE);
 
-    sprintf((char*)sendBuffer, "welcome");
-
     readFromCharacteristic->setReadAuthorizationCallback(this, &BlockTransferService::onReadRequest);
     writeToCharacteristic->setWriteAuthorizationCallback(this, &BlockTransferService::onWriteRequest);
 
     GattCharacteristic *charTable[] = {readFromCharacteristic, writeToCharacteristic};
-    GattService BTService(UUID(0xFF00), charTable, sizeof(charTable) / sizeof(GattCharacteristic *));
+    GattService BTService(UUID(0xFFFF), charTable, sizeof(charTable) / sizeof(GattCharacteristic *));
 
     ble.addService(BTService);
 
@@ -212,6 +186,11 @@ void BlockTransferService::onDataWritten(const GattCharacteristicWriteCBParams* 
                     {
                         /*  Setup message received. 
                         */
+                        
+                        // reset receive buffer so full length
+                        writeBlock->length = sizeof(receiveBlockBuffer);
+                        writeBlock->offset = 0;
+
                         // block length, number is LSB
                         uint16_t blockLength;
                         blockLength = message[2];
