@@ -17,7 +17,7 @@
 uint64_t timercounts;
 
 //DigitalOut mbed_led1(P0_18);
-DigitalOut mbed_led2(P0_19);
+//DigitalOut mbed_led2(P0_19);
 Ticker tick;
 Timer watch;
 

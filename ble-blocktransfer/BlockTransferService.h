@@ -78,7 +78,6 @@ private:
 
     uint8_t             receiveBuffer[BTS_MTU_SIZE_DEFAULT];
     uint8_t             sendBuffer[BTS_MTU_SIZE_DEFAULT];
-    uint8_t             extraBuffer[BTS_MTU_SIZE_DEFAULT];
 
     GattCharacteristic*  writeToCharacteristic;
     GattCharacteristic*  readFromCharacteristic; 
