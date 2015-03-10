@@ -40,10 +40,19 @@ public:
     static const unsigned BTS_MTU_SIZE_DEFAULT         = 23;
 
     /**
-    * @param[ref] ble
-    *                 BLEDevice object for the underlying controller.
+    * @param[ref] &ble  BLEDevice object for the underlying controller.
+    * @param        _readHandler    This function is called when a readCharacteristic is received
+    *                               The function updates the readBlock datastructure with the data
+    *                               to be read. The function can also refuse the operation by
+    *                               setting the length to zero.
+    * @param        _writeHandler   This function is called when data has been written to the
+    *                               writeCharacteristic. The function can either return the same
+    *                               block_t pointer or swap it with a different one for better
+    *                               memory management.
+    * @param        _writeBlock     The initial datastructure pointing to the buffer set a side for
+    *                               receiving data.
     */
-    BlockTransferService(BLEDevice &_ble, block_server_handler_t _readHandler, block_server_handler_t _writeHander);
+    BlockTransferService(BLEDevice &_ble, block_read_handler_t _readHandler, block_write_handler_t _writeHander, block_t* _writeBlock);
 
     ble_error_t updateCharacteristicValue(const uint8_t *value, uint16_t size);
 
@@ -55,53 +64,69 @@ private:
     void onWriteRequest(GattCharacteristicWriteAuthCBParams* params);
 
     /*  This function is called when the BLE device is ready for more characteristic value updates
-        and is shared by all characteristics. 
+        and is shared by all characteristics.
     */
     void onDataSent(unsigned count);
 
     /*  This function is called when any writes have been received by the BLE device.
-        Must filter on characteristic handle to ensure we only respond to writes 
+        Must filter on characteristic handle to ensure we only respond to writes
         intended for this characteristic.
     */
     void onDataWritten(const GattCharacteristicWriteCBParams* event);
 
+    /*  Functions for feeding individual fragments in each batch.
+    */
     void sendReadReply(void);
     bool sendReadReplyRepeatedly(void);
-
     void requestMissing(void);
 
-
 private:
-    BLEDevice          &ble;
-    block_server_handler_t readRequestHandler;
-    block_server_handler_t writeDoneHandler;
+    BLEDevice &ble;
 
-    uint8_t             receiveBuffer[BTS_MTU_SIZE_DEFAULT];
-    uint8_t             sendBuffer[BTS_MTU_SIZE_DEFAULT];
+    /*  Handles for callback functions.
+    */
+    block_read_handler_t readRequestHandler;
+    block_write_handler_t writeDoneHandler;
+
+    /*  Pointer to a data structure which contains the writeTo (receive) buffer.
+        Upon reception, the pointer can be used for swapping buffers instead of copying them.
+    */
+    block_t* writeBlock;
+
+    /*  BLE characteristics the block transfer is built upon.
+    */
+    uint8_t receiveBuffer[BTS_MTU_SIZE_DEFAULT];
+    uint8_t sendBuffer[BTS_MTU_SIZE_DEFAULT];
 
     GattCharacteristic*  writeToCharacteristic;
-    GattCharacteristic*  readFromCharacteristic; 
+    GattCharacteristic*  readFromCharacteristic;
 
     GattAttribute::Handle_t readFromHandle;
     GattAttribute::Handle_t writeToHandle;
 
-    uint16_t receiveBlockOffset;
-    uint16_t receiveBlockTotalFragments;
-
-    uint8_t indexBuffer[30];
-    index_t receiveBlockMissingFragments;
-
-    block_t* writeBlock;
-    block_t writeBlockData;
-    uint8_t receiveBlockBuffer[200];
-
+    /*  Data structure pointing to the read characteristic value.
+        This data structure can be updated everytime a read request is received.
+    */
     block_t* readBlock;
     block_t readBlockData;
-    
+
+    /*  Internal variables for keeping track of how many fragments have been read in a batch.
+    */
     uint8_t directBlock[BTS_MTU_SIZE_DEFAULT];
     uint16_t readTotalFragments;
     uint16_t readFragmentIndex;
-    uint16_t readFragmentsInBatch;    
+    uint16_t readFragmentsInBatch;
+
+    /*  Internal variables for keeping track of how many fragments have been written in a batch.
+    */
+    uint16_t receiveBlockOffset;
+    uint16_t receiveBlockTotalFragments;
+
+    /*  Bitmap for keeping track of "missing" fragments.
+        Note: if the BLE stack is working properly, fragments should never be missing.
+    */
+    uint8_t indexBuffer[30];
+    index_t receiveBlockMissingFragments;
 };
 
 #endif /* #ifndef __BLOCKTRANSFERSERVICE_H__ */

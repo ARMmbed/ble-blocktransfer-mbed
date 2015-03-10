@@ -50,10 +50,12 @@ typedef struct
     uint8_t* data;
     uint16_t length;
     uint16_t offset;
+    uint16_t maxLength;
 } block_t;
 
 typedef void (* block_client_handler_t)(block_t* block, bt_error_t error);
-typedef bt_error_t (* block_server_handler_t)(block_t* block);
+typedef bt_error_t (* block_read_handler_t)(block_t* block);
+typedef block_t* (* block_write_handler_t)(block_t* block);
 
 
 
