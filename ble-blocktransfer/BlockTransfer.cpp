@@ -1,5 +1,5 @@
 
-#include "blockTransfer.h"
+#include "BlockTransfer.h"
 
 bt_state_t blockTransferState = BT_STATE_OFF;
 
