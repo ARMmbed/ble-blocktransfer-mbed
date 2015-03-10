@@ -1,8 +1,8 @@
-#include "BlockTransferClient.h"
+#include "ble-blocktransfer/BlockTransferClient.h"
 
-#include "BlockTransfer.h"
+#include "ble-blocktransfer/BlockTransfer.h"
+#include "ble-blocktransfer/IndexSet.h"
 
-#include "IndexSet.h"
 #include "mbed.h"
 
 #include "app_timer.h"
@@ -34,7 +34,7 @@ static uint16_t writeFragmentsInBatch = 0;
 static block_t* currentReadBlock = NULL;
 static block_client_handler_t currentReadHandler = NULL;
 static uint16_t readNumberOfFragments;
-static uint8_t readPayloadSize;                
+static uint8_t readPayloadSize;
 
 
 /* handles for the current connection and characteristics */
@@ -44,7 +44,7 @@ static uint16_t write_handle = 0;
 static uint16_t cccd_notification_handle = 0; // unreliable
 
 /* default data structure for interacting with the Softdevice */
-static uint8_t buffer[MTU_SIZE_DEFAULT]; 
+static uint8_t buffer[MTU_SIZE_DEFAULT];
 
 static ble_gattc_write_params_t write_params = {
     .write_op = 0,
@@ -110,8 +110,8 @@ bt_error_t blockClientAddService(uint16_t conn_handle, ble_db_discovery_srv_t* s
             DEBUG("write: ");
         }
 
-        DEBUG("%04X %02X %04X\n\r", service->charateristics[idx].cccd_handle, 
-                                                   characteristic->char_props, 
+        DEBUG("%04X %02X %04X\n\r", service->charateristics[idx].cccd_handle,
+                                                   characteristic->char_props,
                                                    characteristic->handle_value);
     }
 
@@ -149,14 +149,14 @@ bt_error_t blockRead(block_t* block, block_client_handler_t handler)
 
         lastTime = 0;
 
-        /*  Do a normal characteristic read at given offset. 
+        /*  Do a normal characteristic read at given offset.
             The server will either respond with a single direct message with the data
-            or a setup message for fragment requests. 
+            or a setup message for fragment requests.
         */
         blockTransferState = BT_STATE_CLIENT_READ_SETUP;
         sd_ble_gattc_read(connection_handle, read_handle, currentReadBlock->offset);
 
-        return BT_SUCCESS;        
+        return BT_SUCCESS;
     }
     else
     {
@@ -167,7 +167,7 @@ bt_error_t blockRead(block_t* block, block_client_handler_t handler)
 
 void blockReadRequestMissing()
 {
-    uint16_t fragmentNumber; 
+    uint16_t fragmentNumber;
     uint16_t count;
 
     findMissing(&missingFragments, &fragmentNumber, &count);
@@ -182,7 +182,7 @@ void blockReadRequestMissing()
         */
         write_params.write_op = BLE_GATT_OP_WRITE_CMD; // write without response
         write_params.handle = write_handle;
-        write_params.len = 5; 
+        write_params.len = 5;
 
         write_params.p_value[0] = BT_TYPE_READ_REQUEST;
         write_params.p_value[1] = fragmentNumber; // LSB
@@ -191,16 +191,16 @@ void blockReadRequestMissing()
         write_params.p_value[4] = count >> 8;
 
         sd_ble_gattc_write(connection_handle, &write_params);
-     
+
         DEBUG("read request: %d %d\n\r", fragmentNumber, count);
-    } 
-    else 
+    }
+    else
     {
         /*  All data received. Acknowledge data reception by requesting fragment after block.
         */
         write_params.write_op = BLE_GATT_OP_WRITE_CMD; // write without response
         write_params.handle = write_handle;
-        write_params.len = 5; 
+        write_params.len = 5;
 
         write_params.p_value[0] = BT_TYPE_READ_REQUEST;
         write_params.p_value[1] = 0xFF;
@@ -209,11 +209,11 @@ void blockReadRequestMissing()
         write_params.p_value[4] = 0x00;
 
         sd_ble_gattc_write(connection_handle, &write_params);
-     
+
         DEBUG("read request: %d %d\n\r", readNumberOfFragments, count);
 
         blockTransferState = BT_STATE_OFF;
-        currentReadHandler(currentReadBlock, BT_SUCCESS);    
+        currentReadHandler(currentReadBlock, BT_SUCCESS);
     }
 }
 
@@ -221,9 +221,9 @@ void blockReadRequestMissing()
 /*  Public function for transmitting a block of data and the function to be called afterwards.
 
     block_t block->data: data pointer
-            block->length: data length 
+            block->length: data length
             block->offset: The offset of this data block in relation to the overall characteristic.
-                           Useful for writing large blocks that doesn't fit in RAM all at once but 
+                           Useful for writing large blocks that doesn't fit in RAM all at once but
                            must be offloaded to/read from FLASH for example.
 */
 bt_error_t blockWrite(block_t* block, block_client_handler_t handler)
@@ -246,7 +246,7 @@ bt_error_t blockWrite(block_t* block, block_client_handler_t handler)
             write_params.handle = write_handle;
             write_params.len = DIRECT_WRITE_HEADER_SIZE + currentWriteBlock->length;
 
-            write_params.p_value[0] = BT_TYPE_WRITE_DIRECT; 
+            write_params.p_value[0] = BT_TYPE_WRITE_DIRECT;
             write_params.p_value[1] = currentWriteBlock->offset;
             write_params.p_value[2] = currentWriteBlock->offset >> 8;
             memcpy(&(write_params.p_value[3]), currentWriteBlock->data, currentWriteBlock->length);
@@ -293,7 +293,7 @@ bt_error_t blockWrite(block_t* block, block_client_handler_t handler)
     }
 }
 
-/*  Wrapper function for calling blockWriteSequenceRepeat() repeatedly until all buffers are full. 
+/*  Wrapper function for calling blockWriteSequenceRepeat() repeatedly until all buffers are full.
     Keeps track of progress variables.
 */
 static void blockWriteSequence()
@@ -304,7 +304,7 @@ static void blockWriteSequence()
     {
         result = blockWriteSequenceRepeat();
 
-        DEBUG("write: %d %02X\n\r", writeFragmentIndex, result);   
+        DEBUG("write: %d %02X\n\r", writeFragmentIndex, result);
 
         if (result == NRF_SUCCESS)
         {
@@ -330,7 +330,7 @@ static uint32_t blockWriteSequenceRepeat()
     // find length. the last packet might be shorter.
     // writeFragmentIndex is zero-indexed
     length = (writeFragmentIndex < writeTotalFragments - 1) ? MAX_BLOCK_PAYLOAD_SIZE :
-                currentWriteBlock->length - ((writeTotalFragments - 1) * MAX_BLOCK_PAYLOAD_SIZE);  
+                currentWriteBlock->length - ((writeTotalFragments - 1) * MAX_BLOCK_PAYLOAD_SIZE);
 
     // set data type based on whether more data is pending in this batch
     type = (writeFragmentsInBatch == 1) ? BT_TYPE_WRITE_PAYLOAD_LAST : BT_TYPE_WRITE_PAYLOAD_MORE;
@@ -338,7 +338,7 @@ static uint32_t blockWriteSequenceRepeat()
     write_params.write_op = BLE_GATT_OP_WRITE_CMD; // write without response
     write_params.handle = write_handle;
     write_params.len = BLOCK_HEADER_SIZE + length;
-    write_params.p_value[0] = type; 
+    write_params.p_value[0] = type;
     write_params.p_value[1] = writeFragmentIndex; // LSB
     write_params.p_value[2] = writeFragmentIndex >> 8; // LSB
 
@@ -409,7 +409,7 @@ static void gattcWriteEvent(ble_evt_t *p_ble_evt)
                 DEBUG("Subscribe sent\n\r");
                 blockTransferState = BT_STATE_OFF;
                 break;
-            default:    
+            default:
                 break;
         }
     }
@@ -420,7 +420,7 @@ static void gattcWriteEvent(ble_evt_t *p_ble_evt)
 }
 
 /*  The common event does not contain a handle to indicate which characteristic the transmission originated from.
-    
+
 */
 static void commonTxEvent(ble_evt_t *p_ble_evt)
 {
@@ -433,7 +433,7 @@ static void commonTxEvent(ble_evt_t *p_ble_evt)
             DEBUG("Direct payload sent\n\r");
 
             blockTransferState = BT_STATE_OFF;
-            currentWriteHandler(currentWriteBlock, BT_SUCCESS);    
+            currentWriteHandler(currentWriteBlock, BT_SUCCESS);
             break;
 
         case BT_STATE_CLIENT_WRITE_SETUP:
@@ -519,7 +519,7 @@ static void gattcReadEvent(ble_evt_t *p_ble_evt)
                     }
 
                     // find read length that fits the receive buffer
-                    currentLength = (availableLength > currentReadBlock->length) ? 
+                    currentLength = (availableLength > currentReadBlock->length) ?
                                                 currentReadBlock->length : availableLength;
                     currentReadBlock->length = currentLength;
 
@@ -596,7 +596,7 @@ static void gattcHVXEvent(ble_evt_t *p_ble_evt)
                         // the request was out-of-range which means all messages
                         // has been received
                         blockTransferState = BT_STATE_OFF;
-                        currentWriteHandler(currentWriteBlock, BT_SUCCESS);    
+                        currentWriteHandler(currentWriteBlock, BT_SUCCESS);
                     }
 
                 }

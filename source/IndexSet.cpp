@@ -1,4 +1,4 @@
-#include "IndexSet.h"
+#include "ble-blocktransfer/IndexSet.h"
 
 
 #include "mbed.h"
@@ -130,7 +130,7 @@ static uint8_t findSimilar(index_t* indexSet, uint16_t* index, uint8_t value)
                 {
                     *index = tmp;
 
-                    return 0; // success                        
+                    return 0; // success
                 }
                 else
                 {
@@ -149,7 +149,7 @@ static uint8_t findSimilar(index_t* indexSet, uint16_t* index, uint8_t value)
 bool containsIndex(index_t* indexSet, uint16_t index)
 {
     uint16_t byte = index / 8;
-    uint8_t bit = index - (byte * 8);    
+    uint8_t bit = index - (byte * 8);
 
     return (((indexSet->buffer[byte] >> bit) & 0x01) == 1);
 }

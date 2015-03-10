@@ -15,7 +15,7 @@
  */
 
 //#include "BlockTransfer.h"
-#include "BlockTransferService.h"
+#include "ble-blocktransfer/BlockTransferService.h"
 
 #if 0
 #define DEBUG(...) { printf(__VA_ARGS__); }
