@@ -5,7 +5,7 @@
 
 #include "mbed.h"
 
-
+#include "ble-blocktransfer/Block.h"
 
 /* state machine */
 typedef enum {
@@ -45,19 +45,10 @@ typedef enum
     BT_ERROR = 1
 } bt_error_t;
 
-typedef struct
-{
-    uint8_t* data;
-    uint16_t length;
-    uint16_t offset;
-    uint16_t maxLength;
-} block_t;
 
 typedef void (* block_client_handler_t)(block_t* block, bt_error_t error);
 typedef bt_error_t (* block_read_handler_t)(block_t* block);
 typedef block_t* (* block_write_handler_t)(block_t* block);
-
-
 
 
 /* size constants */
