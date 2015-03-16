@@ -1,6 +1,6 @@
 {
   "name": "ble-blocktransfer-mbed",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Block Transfer Protocol for mbed using the Bluetooth LE API",
   "keywords": [],
   "author": "Marcus Chang",
