@@ -74,6 +74,9 @@ private:
     */
     void onDataWritten(const GattCharacteristicWriteCBParams* event);
 
+    /* Connection disconnected. Reset variables and state. */
+    void onDisconnection();
+
     /*  Functions for feeding individual fragments in each batch.
     */
     void sendReadReply(void);
