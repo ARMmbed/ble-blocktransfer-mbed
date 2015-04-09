@@ -40,27 +40,31 @@ public:
     static const unsigned BTS_MTU_SIZE_DEFAULT         = 23;
 
     /**
-    * @param[ref] &ble  BLEDevice object for the underlying controller.
-    * @param        _readHandler    This function is called when a readCharacteristic is received
+    * @param        &ble            BLEDevice object for the underlying controller.
+    * @param        &uuid           Service UUID for the Block Transfer Service.
+    * @param        readHandler     This function is called when a readCharacteristic is received
     *                               The function updates the readBlock datastructure with the data
     *                               to be read. The function can also refuse the operation by
     *                               setting the length to zero.
-    * @param        _writeHandler   This function is called when data has been written to the
+    * @param        writeHandler    This function is called when data has been written to the
     *                               writeCharacteristic. The function can either return the same
     *                               block_t pointer or swap it with a different one for better
     *                               memory management.
-    * @param        _writeBlock     The initial datastructure pointing to the buffer set a side for
+    * @param        writeBlock      The initial datastructure pointing to the buffer set a side for
     *                               receiving data.
     */
-    BlockTransferService(BLEDevice &_ble, block_read_handler_t _readHandler, block_write_handler_t _writeHander, block_t* _writeBlock);
+    BlockTransferService(BLEDevice &_ble,
+                         const UUID &uuid,
+                         block_read_handler_t readHandler,
+                         block_write_handler_t writeHander,
+                         block_t* writeBlock);
 
+    /* Send a short direct message to the client. Replacement for Handle Value Indications. */
     ble_error_t updateCharacteristicValue(const uint8_t *value, uint16_t size);
 
 private:
-    /* Authorize requests are characteristic specific. No need to check if the handle is correct. */
+    /* Internal callback functions for handling read and write requests. */
     void onReadRequest(GattCharacteristicReadAuthCBParams* params);
-
-    /* Authorize requests are characteristic specific. No need to check if the handle is correct. */
     void onWriteRequest(GattCharacteristicWriteAuthCBParams* params);
 
     /*  This function is called when the BLE device is ready for more characteristic value updates
