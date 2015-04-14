@@ -26,17 +26,17 @@ extern bt_state_t blockTransferState;
 /* message types */
 typedef enum
 {
-    BT_TYPE_WRITE_SETUP,
-    BT_TYPE_WRITE_REQUEST,
-    BT_TYPE_WRITE_PAYLOAD_MORE,
-    BT_TYPE_WRITE_PAYLOAD_LAST,
-    BT_TYPE_WRITE_DIRECT,
-    BT_TYPE_READ_SETUP,
-    BT_TYPE_READ_REQUEST,
-    BT_TYPE_READ_PAYLOAD_MORE,
-    BT_TYPE_READ_PAYLOAD_LAST,
-    BT_TYPE_READ_DIRECT,
-    BT_TYPE_READ_NOTIFY
+    BT_TYPE_WRITE_SETUP         = 0x00,
+    BT_TYPE_WRITE_REQUEST       = 0x01,
+    BT_TYPE_WRITE_PAYLOAD_MORE  = 0x02,
+    BT_TYPE_WRITE_PAYLOAD_LAST  = 0x03,
+    BT_TYPE_WRITE_DIRECT        = 0x04,
+    BT_TYPE_READ_SETUP          = 0x05,
+    BT_TYPE_READ_REQUEST        = 0x06,
+    BT_TYPE_READ_PAYLOAD_MORE   = 0x07,
+    BT_TYPE_READ_PAYLOAD_LAST   = 0x08,
+    BT_TYPE_READ_DIRECT         = 0x09,
+    BT_TYPE_READ_NOTIFY         = 0x0A
 } bt_type_t;
 
 typedef enum
