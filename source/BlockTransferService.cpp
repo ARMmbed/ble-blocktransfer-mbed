@@ -47,11 +47,9 @@ BlockTransferService::BlockTransferService(BLEDevice &_ble,
                                         GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY);
     writeToCharacteristic = new GattCharacteristic(ServiceWriteCharacteristicShortUUID,
                                         receiveBuffer, 1, BTS_MTU_SIZE_DEFAULT,
-                                        GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE |
                                         GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE_WITHOUT_RESPONSE);
 
     readFromCharacteristic->setReadAuthorizationCallback(this, &BlockTransferService::onReadRequest);
-    writeToCharacteristic->setWriteAuthorizationCallback(this, &BlockTransferService::onWriteRequest);
 
     GattCharacteristic *charTable[] = {readFromCharacteristic, writeToCharacteristic};
     GattService BTService(uuid, charTable, sizeof(charTable) / sizeof(GattCharacteristic *));
@@ -479,40 +477,5 @@ void BlockTransferService::requestMissing(void)
         ble.updateCharacteristicValue(readFromHandle, request, 5);
 
         BLE_DEBUG("send ack: 0xFFFF 1\r\n");
-    }
-}
-
-/*  Client sends a write request.
-    Only writes that can fit a single packet are sent using this characteristic.
-*/
-void BlockTransferService::onWriteRequest(GattCharacteristicWriteAuthCBParams* params)
-{
-    BLE_DEBUG("write request\n\r");
-
-    if (params->data[0] == BT_TYPE_WRITE_DIRECT)
-    {
-        /*  Direct message received.
-            Send payload to upper layer.
-        */
-
-        // the offset of the current block with regards to the overall characteristic
-        receiveBlockOffset = params->data[2];
-        receiveBlockOffset = (receiveBlockOffset << 8) | params->data[1];
-
-        // discard header, grab payload
-        memcpy(writeBlock->data, &params->data[3], params->len - 3);
-        writeBlock->offset = receiveBlockOffset;
-        writeBlock->length = params->len - 3;
-
-        /*  Full block received. No change in state.
-            Signal upper layer of write request.
-        */
-        writeBlock = writeDoneHandler(writeBlock);
-
-        params->authorizationReply = AUTH_CALLBACK_REPLY_SUCCESS;
-    }
-    else
-    {
-        params->authorizationReply = AUTH_CALLBACK_REPLY_ATTERR_WRITE_NOT_PERMITTED;
     }
 }
