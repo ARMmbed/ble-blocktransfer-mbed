@@ -5,9 +5,9 @@
 typedef struct
 {
     uint8_t* data;
-    uint16_t length;
-    uint16_t offset;
-    uint16_t maxLength;
+    uint32_t length;
+    uint32_t offset;
+    uint32_t maxLength;
 } block_t;
 
 #endif // __BLOCK_H__

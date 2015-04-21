@@ -37,7 +37,7 @@
 class BlockTransferService {
 
 public:
-    static const unsigned BTS_MTU_SIZE_DEFAULT         = 23;
+    static const unsigned BTS_MTU_SIZE_DEFAULT         = 20;
 
     /**
     * @param        &ble            BLEDevice object for the underlying controller.
@@ -120,20 +120,31 @@ private:
     /*  Internal variables for keeping track of how many fragments have been read in a batch.
     */
     uint8_t directBlock[BTS_MTU_SIZE_DEFAULT];
-    uint16_t readTotalFragments;
-    uint16_t readFragmentIndex;
-    uint16_t readFragmentsInBatch;
+    uint32_t readTotalFragments;
+    uint32_t readFragmentIndex;
+    uint32_t readFragmentsInBatch;
 
     /*  Internal variables for keeping track of how many fragments have been written in a batch.
     */
-    uint16_t receiveBlockOffset;
-    uint16_t receiveBlockTotalFragments;
+    uint32_t receiveLengthOffset;
+    uint32_t receiveFragmentOffset;
+    uint32_t receiveTotalFragments;
 
     /*  Bitmap for keeping track of "missing" fragments.
         Note: if the BLE stack is working properly, fragments should never be missing.
     */
     uint8_t indexBuffer[30];
     index_t receiveBlockMissingFragments;
+
+    /*  Internal variable containing the current MTU size.
+    */
+    uint16_t currentMTU;
+    uint16_t maxBlockPayloadSize;
+    uint16_t maxDirectReadPayloadSize;
+
+    /*
+    */
+    bt_state_t internalState;
 };
 
 #endif /* #ifndef __BLOCKTRANSFERSERVICE_H__ */
