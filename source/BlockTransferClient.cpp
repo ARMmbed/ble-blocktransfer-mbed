@@ -5,7 +5,6 @@
 
 #include "mbed.h"
 
-#include "app_timer.h"
 
 #if 0
 #define DEBUG(...) { printf(__VA_ARGS__); }

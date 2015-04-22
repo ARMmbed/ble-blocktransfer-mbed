@@ -47,7 +47,7 @@ typedef enum
 
 
 typedef void (* block_client_handler_t)(block_t* block, bt_error_t error);
-typedef bt_error_t (* block_read_handler_t)(block_t* block);
+typedef void (* block_read_handler_t)(block_t* block);
 typedef block_t* (* block_write_handler_t)(block_t* block);
 
 

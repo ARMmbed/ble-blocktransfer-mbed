@@ -1,5 +1,5 @@
 /* mbed Microcontroller Library
- * Copyright (c) 2006-2013 ARM Limited
+ * Copyright (c) 2006-2015 ARM Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,22 +18,18 @@
 #define __BLOCKTRANSFERSERVICE_H__
 
 #include "mbed.h"
-
-
-#include "BlockTransfer.h"
-#include "IndexSet.h"
-
 #include "UUID.h"
 #include "BLEDevice.h"
 
-
+#include "ble-blocktransfer/FunctionPointerWithContext.h"
+#include "ble-blocktransfer/FunctionPointerWithContextAndReturnValue.h"
+#include "ble-blocktransfer/BlockTransfer.h"
+#include "ble-blocktransfer/IndexSet.h"
 
 /**
 * @class BlockTransferService
 * @brief BLE Service for transferring large blocks of data over BLE
 */
-
-
 class BlockTransferService {
 
 public:
@@ -53,11 +49,45 @@ public:
     * @param        writeBlock      The initial datastructure pointing to the buffer set a side for
     *                               receiving data.
     */
-    BlockTransferService(BLEDevice &_ble,
-                         const UUID &uuid,
-                         block_read_handler_t readHandler,
-                         block_write_handler_t writeHander,
-                         block_t* writeBlock);
+    BlockTransferService(BLEDevice &_ble, const UUID &uuid);
+
+    /*  Set "write received" callback function and write buffer.
+
+        The function is called when a block of data has been written to the write buffer.
+        The callback can either return the same block or swap it with a different one.
+    */
+    void setWriteAuthorizationCallback(block_t* (*writeHandler)(block_t*), block_t* _writeBlock);
+
+    template <typename T>
+    void setWriteAuthorizationCallback(T *object, block_t* (T::*member)(block_t*), block_t* _writeBlock)
+    {
+        /*  Guard against resetting callback and write block while in the middle of a transfer. */
+        if (internalState == BT_STATE_OFF)
+        {
+            writeDoneHandler.attach(object, member);
+            writeBlock = _writeBlock;
+        }
+    }
+
+    /*  Set "read requested" callback function.
+
+        The function is called when a client wants to read the Block Transfer service.
+        The function can modify the block_t fields 'uint8_t* data' and 'uint32_t length'
+        to return the data to be sent back to the client.
+
+        Setting the length to '0' means the read request was denied.
+    */
+    void setReadAuthorizationCallback(void (*readHandler)(block_t*));
+
+    template <typename T>
+    void setReadAuthorizationCallback(T *object, void (T::*member)(block_t*))
+    {
+        /*  Guard against resetting callback while in the middle of a transfer. */
+        if (internalState == BT_STATE_OFF)
+        {
+            readRequestHandler.attach(object, member);
+        }
+    }
 
     /* Send a short direct message to the client. Replacement for Handle Value Indications. */
     ble_error_t updateCharacteristicValue(const uint8_t *value, uint16_t size);
@@ -92,8 +122,8 @@ private:
 
     /*  Handles for callback functions.
     */
-    block_read_handler_t readRequestHandler;
-    block_write_handler_t writeDoneHandler;
+    FunctionPointerWithContext<block_t*>                         readRequestHandler;
+    FunctionPointerWithContextAndReturnValue<block_t*, block_t*> writeDoneHandler;
 
     /*  Pointer to a data structure which contains the writeTo (receive) buffer.
         Upon reception, the pointer can be used for swapping buffers instead of copying them.
