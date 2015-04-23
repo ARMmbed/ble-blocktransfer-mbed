@@ -215,15 +215,14 @@ void BlockTransferService::onDataWritten(const GattCharacteristicWriteCBParams* 
         const uint8_t* message = event->data;
         const bt_type_t messageType = (bt_type_t) (message[0] >> 4);
 
-        BLE_DEBUG("onDataWritten: ");
 #if 0
-
+        BLE_DEBUG("onDataWritten: ");
         for (int idx = 0; idx < event->len; idx++)
         {
             BLE_DEBUG("%02X", event->data[idx]);
         }
-#endif
         BLE_DEBUG("\r\n");
+#endif
 
         switch(messageType)
         {
@@ -346,14 +345,14 @@ void BlockTransferService::onDataWritten(const GattCharacteristicWriteCBParams* 
                         // check if fragment is a duplicate
                         if (containsIndex(&receiveBlockMissingFragments, relativeFragmentIndex))
                         {
-                            BLE_DEBUG("write: fragment: %d %d : ", absoluteFragmentIndex, relativeFragmentIndex);
+                            BLE_DEBUG("\t: fragment : %5d %3d : ", absoluteFragmentIndex, relativeFragmentIndex);
 #if 0
                             for (int idx = 0; idx < event->len; idx++)
                             {
                                 BLE_DEBUG("%02X", event->data[idx]);
                             }
-#endif
                             BLE_DEBUG("\r\n");
+#endif
 
                             // mark fragment as received in the index
                             removeIndex(&receiveBlockMissingFragments, relativeFragmentIndex);
@@ -363,7 +362,7 @@ void BlockTransferService::onDataWritten(const GattCharacteristicWriteCBParams* 
                             uint16_t currentPayloadLength = event->len - BLOCK_HEADER_SIZE;
                             memcpy(&writeBlock->data[processedLength], &event->data[3], currentPayloadLength);
 
-                            BLE_DEBUG("%d\r\n", processedLength);
+                            BLE_DEBUG("%4d\r\n", processedLength);
 
                             /*  When sender signals "no more data", request missing fragments
                                 or signal reception complete.
@@ -509,7 +508,7 @@ void BlockTransferService::sendReadReply(void)
         // send current fragment
         bool result = sendReadReplyRepeatedly();
 
-        BLE_DEBUG("read: notify: %d %d\r\n", readFragmentIndex, result);
+        BLE_DEBUG("\t: notify : %d %d\r\n", readFragmentIndex, result);
 
         // update to next fragment if successful
         if (result)
