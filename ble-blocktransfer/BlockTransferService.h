@@ -38,23 +38,24 @@ public:
     /**
     * @param        &ble            BLEDevice object for the underlying controller.
     * @param        &uuid           Service UUID for the Block Transfer Service.
-    * @param        readHandler     This function is called when a readCharacteristic is received
-    *                               The function updates the readBlock datastructure with the data
-    *                               to be read. The function can also refuse the operation by
-    *                               setting the length to zero.
+    * @param        securityMode    Security mode required.
+    */
+    BlockTransferService(BLEDevice &_ble, const UUID &uuid,
+                         GattCharacteristic::ble_gatt_char_required_security_t securityMode
+                         = GattCharacteristic::SECURITY_MODE_ENCRYPTION_OPEN_LINK);
+
+    /*
+    * Set "write received" callback function and write buffer.
+    *
+    * The function is called when a block of data has been written to the write buffer.
+    * The callback can either return the same block or swap it with a different one.
+    *
     * @param        writeHandler    This function is called when data has been written to the
     *                               writeCharacteristic. The function can either return the same
     *                               block_t pointer or swap it with a different one for better
     *                               memory management.
     * @param        writeBlock      The initial datastructure pointing to the buffer set a side for
     *                               receiving data.
-    */
-    BlockTransferService(BLEDevice &_ble, const UUID &uuid);
-
-    /*  Set "write received" callback function and write buffer.
-
-        The function is called when a block of data has been written to the write buffer.
-        The callback can either return the same block or swap it with a different one.
     */
     void setWriteAuthorizationCallback(block_t* (*writeHandler)(block_t*), block_t* _writeBlock);
 
@@ -69,13 +70,19 @@ public:
         }
     }
 
-    /*  Set "read requested" callback function.
-
-        The function is called when a client wants to read the Block Transfer service.
-        The function can modify the block_t fields 'uint8_t* data' and 'uint32_t length'
-        to return the data to be sent back to the client.
-
-        Setting the length to '0' means the read request was denied.
+    /*
+    * Set "read requested" callback function.
+    *
+    * The function is called when a client wants to read the Block Transfer service.
+    * The function can modify the block_t fields 'uint8_t* data' and 'uint32_t length'
+    * to return the data to be sent back to the client.
+    *
+    * Setting the length to '0' means the read request was denied.
+    *
+    * @param        readHandler     This function is called when a readCharacteristic is received
+    *                               The function updates the readBlock datastructure with the data
+    *                               to be read. The function can also refuse the operation by
+    *                               setting the length to zero.
     */
     void setReadAuthorizationCallback(void (*readHandler)(block_t*));
 

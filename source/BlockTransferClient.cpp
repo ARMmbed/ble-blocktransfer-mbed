@@ -47,11 +47,12 @@ static uint8_t buffer[MTU_SIZE_DEFAULT];
 
 static ble_gattc_write_params_t write_params = {
     .write_op = 0,
+    .flags = 0,
     .handle = 0,
     .offset = 0,
     .len = MTU_SIZE_DEFAULT,
-    .p_value = buffer,
-    .flags = 0};
+    .p_value = buffer
+};
 
 
 

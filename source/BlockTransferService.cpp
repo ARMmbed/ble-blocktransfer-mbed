@@ -25,7 +25,8 @@
 const uint16_t ServiceWriteCharacteristicShortUUID = 0x0001;
 const uint16_t ServiceReadCharacteristicShortUUID  = 0x0002;
 
-BlockTransferService::BlockTransferService(BLEDevice &_ble, const UUID &uuid)
+BlockTransferService::BlockTransferService(BLEDevice &_ble, const UUID &uuid,
+    GattCharacteristic::ble_gatt_char_required_security_t securityMode)
     :   ble(_ble),
         readRequestHandler(),
         writeDoneHandler(NULL, NULL),
@@ -52,6 +53,14 @@ BlockTransferService::BlockTransferService(BLEDevice &_ble, const UUID &uuid)
                                         receiveBuffer, 1, BTS_MTU_SIZE_DEFAULT,
                                         GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE_WITHOUT_RESPONSE);
 
+    /*  Enable security.
+    */
+    ble.initializeSecurity();
+    readFromCharacteristic->requireSecurity(securityMode);
+//    writeToCharacteristic->requireSecurity(securityMode);
+
+    /*  Register callback.
+    */
     readFromCharacteristic->setReadAuthorizationCallback(this, &BlockTransferService::onReadRequest);
 
     GattCharacteristic *charTable[] = {readFromCharacteristic, writeToCharacteristic};
