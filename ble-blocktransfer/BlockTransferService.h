@@ -41,8 +41,8 @@ public:
     * @param        securityMode    Security mode required.
     */
     BlockTransferService(BLEDevice &_ble, const UUID &uuid,
-                         GattCharacteristic::ble_gatt_char_required_security_t securityMode
-                         = GattCharacteristic::SECURITY_MODE_ENCRYPTION_OPEN_LINK);
+                         Gap::SecurityMode_t securityMode
+                         = Gap::SECURITY_MODE_ENCRYPTION_OPEN_LINK);
 
     /*
     * Set "write received" callback function and write buffer.
