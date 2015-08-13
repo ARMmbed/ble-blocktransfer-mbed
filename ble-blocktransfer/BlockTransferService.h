@@ -19,7 +19,7 @@
 
 #include "mbed.h"
 #include "UUID.h"
-#include "BLEDevice.h"
+#include "ble/BLE.h"
 
 #include "ble-blocktransfer/FunctionPointerWithContext.h"
 #include "ble-blocktransfer/FunctionPointerWithContextAndReturnValue.h"
@@ -33,16 +33,24 @@
 class BlockTransferService {
 
 public:
-    static const unsigned BTS_MTU_SIZE_DEFAULT         = 20;
+//    static const unsigned BTS_MTU_SIZE_DEFAULT         = 20;
+
+    /* state machine */
+    typedef enum {
+        BT_STATE_SERVER_READ,
+        BT_STATE_SERVER_WRITE,
+        BT_STATE_READY,
+        BT_STATE_OFF
+    } bt_state_t;
 
     /**
     * @param        &ble            BLEDevice object for the underlying controller.
     * @param        &uuid           Service UUID for the Block Transfer Service.
     * @param        securityMode    Security mode required.
     */
-    BlockTransferService(BLEDevice &_ble, const UUID &uuid,
-                         Gap::SecurityMode_t securityMode
-                         = Gap::SECURITY_MODE_ENCRYPTION_OPEN_LINK);
+    BlockTransferService(BLE& _ble, const UUID &uuid,
+                         SecurityManager::SecurityMode_t securityMode
+                         = SecurityManager::SECURITY_MODE_ENCRYPTION_OPEN_LINK);
 
     /*
     * Set "write received" callback function and write buffer.
@@ -101,8 +109,8 @@ public:
 
 private:
     /* Internal callback functions for handling read and write requests. */
-    void onReadRequest(GattCharacteristicReadAuthCBParams* params);
-    void onWriteRequest(GattCharacteristicWriteAuthCBParams* params);
+    void onReadRequest(GattReadAuthCallbackParams* params);
+    void onWriteRequest(GattWriteAuthCallbackParams* params);
 
     /*  This function is called when the BLE device is ready for more characteristic value updates
         and is shared by all characteristics.
@@ -113,7 +121,7 @@ private:
         Must filter on characteristic handle to ensure we only respond to writes
         intended for this characteristic.
     */
-    void onDataWritten(const GattCharacteristicWriteCBParams* event);
+    void onDataWritten(const GattWriteCallbackParams* event);
 
     /* Connection disconnected. Reset variables and state. */
     void onDisconnection();
@@ -125,7 +133,7 @@ private:
     void requestMissing(void);
 
 private:
-    BLEDevice &ble;
+    BLE& ble;
 
     /*  Handles for callback functions.
     */
@@ -170,8 +178,9 @@ private:
     /*  Bitmap for keeping track of "missing" fragments.
         Note: if the BLE stack is working properly, fragments should never be missing.
     */
-    uint8_t indexBuffer[30];
-    index_t receiveBlockMissingFragments;
+//    uint8_t indexBuffer[30];
+//    index_t receiveBlockMissingFragments;
+    IndexSet<30> missingFragments;
 
     /*  Internal variable containing the current MTU size.
     */

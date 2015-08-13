@@ -1,160 +1,108 @@
+/* mbed Microcontroller Library
+ * Copyright (c) 2006-2015 ARM Limited
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+ 
 #include "ble-blocktransfer/BlockTransferClient.h"
 
-#include "ble-blocktransfer/BlockTransfer.h"
-#include "ble-blocktransfer/IndexSet.h"
-
-#include "mbed.h"
-
-
 #if 0
-#define DEBUG(...) { printf(__VA_ARGS__); }
+#define BLE_DEBUG(...) { printf(__VA_ARGS__); }
 #else
-#define DEBUG(...) /* nothing */
+#define BLE_DEBUG(...) /* nothing */
 #endif
 
+/*****************************************************************************/
+/* C to C++                                                                  */
+/*****************************************************************************/
 
-uint64_t timercounts;
+static BlockTransferClient* btcBridge;
 
-//DigitalOut mbed_led1(P0_18);
-//DigitalOut mbed_led2(P0_19);
-Ticker tick;
-Timer watch;
-
-
-
-/* variables for storing the current block being transmitted and the progress */
-static block_t* currentWriteBlock = NULL;
-static block_client_handler_t currentWriteHandler = NULL;
-static uint16_t writeFragmentIndex = 0;
-static uint16_t writeTotalFragments = 0;
-static uint16_t writeFragmentsInBatch = 0;
-
-/* variables for storing the current block being transmitted and the progress */
-static block_t* currentReadBlock = NULL;
-static block_client_handler_t currentReadHandler = NULL;
-static uint16_t readNumberOfFragments;
-static uint8_t readPayloadSize;
-
-
-/* handles for the current connection and characteristics */
-static uint16_t connection_handle = 0;
-static uint16_t read_handle = 0;
-static uint16_t write_handle = 0;
-static uint16_t cccd_notification_handle = 0; // unreliable
-
-/* default data structure for interacting with the Softdevice */
-static uint8_t buffer[MTU_SIZE_DEFAULT];
-
-static ble_gattc_write_params_t write_params = {
-    .write_op = 0,
-    .flags = 0,
-    .handle = 0,
-    .offset = 0,
-    .len = MTU_SIZE_DEFAULT,
-    .p_value = buffer
-};
-
-
-
-
-static uint8_t indexBuffer[30] = {0};
-static index_t missingFragments;
-
-static void blockWriteSequence();
-static uint32_t blockWriteSequenceRepeat();
-
-static void gattcReadEvent(ble_evt_t *p_ble_evt);
-static void gattcWriteEvent(ble_evt_t *p_ble_evt);
-static void gattcHVXEvent(ble_evt_t *p_ble_evt);
-static void commonTxEvent(ble_evt_t *p_ble_evt);
-
-static void nop() {;}
-static uint32_t lastTime = 0;
-
-/*  Given connection handle and database over server characteristics, find handles
-    for characteristics used by the block transfer protocol and subscribe to notifications.
-*/
-bt_error_t blockClientAddService(uint16_t conn_handle, ble_db_discovery_srv_t* service)
+static void bridgeCharacteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristicP) 
 {
-    initIndexSet(&missingFragments, indexBuffer, 30);
-    connection_handle = conn_handle;
-
-    tick.attach(nop, 1.0);
-    watch.start();
-
-    // step through all characteristics in the given service
-    for (uint8_t idx = 0; idx < service->char_count; idx++)
+    if (btcBridge)
     {
-        const ble_gattc_char_t* characteristic = &service->charateristics[idx].characteristic;
-        const ble_gatt_char_props_t* properties = &characteristic->char_props;
-
-        /* The Block Transfer protocol expects 4 characteristics:
-            - read
-            - read w/o response
-            - write
-            - write w/o response
-        */
-        if (properties->read == 1)
-        {
-            if (properties->notify == 1)
-            {
-                read_handle = characteristic->handle_value;
-                cccd_notification_handle = service->charateristics[idx].cccd_handle;
-
-                DEBUG("read: ");
-            }
-        }
-        else if (properties->write_wo_resp == 1)
-        {
-            write_handle = characteristic->handle_value;
-            DEBUG("write: ");
-        }
-
-        DEBUG("%04X %02X %04X\n\r", service->charateristics[idx].cccd_handle,
-                                                   characteristic->char_props,
-                                                   characteristic->handle_value);
-    }
-
-    /* if all four handles were found, do stuff */
-    if ((read_handle != 0) && (write_handle != 0))
-    {
-        if (cccd_notification_handle != 0)
-        {
-            write_params.write_op = BLE_GATT_OP_WRITE_REQ; // write with response
-            write_params.handle = cccd_notification_handle;
-            write_params.len = 1;
-            write_params.p_value[0] = BLE_GATT_HVX_NOTIFICATION; // notification with response
-
-            blockTransferState = BT_STATE_CLIENT_SUBSCRIBE;
-            sd_ble_gattc_write(connection_handle, &write_params);
-        }
-
-        return BT_SUCCESS;
-    }
-    else
-    {
-        return BT_ERROR;
+        btcBridge->characteristicDiscoveryCallback(characteristicP);
     }
 }
 
-
-bt_error_t blockRead(block_t* block, block_client_handler_t handler)
+static void bridgeReadCallback(const GattReadCallbackParams* params)
 {
-    if (blockTransferState == BT_STATE_OFF)
+    if (btcBridge)
     {
-        currentReadBlock = block;
-        currentReadHandler = handler;
+        btcBridge->readCallback(params);
+    }
+}
 
-        DEBUG("read: %d\n\r", currentReadBlock->length);
+static void bridgeHVXCallback(const GattHVXCallbackParams* params)
+{
+    if (btcBridge)
+    {
+        btcBridge->hvxCallback(params);
+    }
+}
 
-        lastTime = 0;
+/*****************************************************************************/
+/* BlockTransferClient                                                       */
+/*****************************************************************************/
+
+
+BlockTransferClient::BlockTransferClient(void (*clientReady)(void),
+                                         BLE& _ble, 
+                                         const UUID& uuid, 
+                                         Gap::Handle_t _peripheral)
+    :   ble(_ble),
+        peripheral(_peripheral),
+        
+        currentMTU(BTS_MTU_SIZE_DEFAULT),
+        maxBlockPayloadSize(BTS_MTU_SIZE_DEFAULT - BLOCK_HEADER_SIZE),
+        maxDirectReadPayloadSize(BTS_MTU_SIZE_DEFAULT - DIRECT_READ_HEADER_SIZE),
+        internalState(BT_STATE_OFF)
+{
+    writeDoneHandler.attach(clientReady);
+
+    // register callback functions
+    // this should be onDataWritten in gattClient, but interface does not support memberfunctions
+    ble.gattServer().onDataSent(this, &BlockTransferClient::internalDataSent);
+
+    ble.gattClient().launchServiceDiscovery(peripheral,
+                                            NULL,
+                                            bridgeCharacteristicDiscoveryCallback,
+                                            uuid);
+
+    ble.gattClient().onHVX(bridgeHVXCallback);
+    ble.gattClient().onDataRead(bridgeReadCallback);
+
+    ble.addToDisconnectionCallChain(this, &BlockTransferClient::onDisconnection);
+
+    btcBridge = this;
+}
+
+bt_error_t BlockTransferClient::internalRead(block_t* block)
+{
+    if (internalState == BT_STATE_READY)
+    {
+        readBlock = block;
+
+        BLE_DEBUG("btc: read: %d\r\n", readBlock->length);
 
         /*  Do a normal characteristic read at given offset.
             The server will either respond with a single direct message with the data
             or a setup message for fragment requests.
         */
-        blockTransferState = BT_STATE_CLIENT_READ_SETUP;
-        sd_ble_gattc_read(connection_handle, read_handle, currentReadBlock->offset);
+        internalState = BT_STATE_CLIENT_READ_SETUP;
+        
+        readCharacteristic.read(readBlock->offset);
 
         return BT_SUCCESS;
     }
@@ -165,126 +113,72 @@ bt_error_t blockRead(block_t* block, block_client_handler_t handler)
 }
 
 
-void blockReadRequestMissing()
+
+
+
+bt_error_t BlockTransferClient::internalWrite(block_t* block)
 {
-    uint16_t fragmentNumber;
-    uint16_t count;
-
-    findMissing(&missingFragments, &fragmentNumber, &count);
-
-    DEBUG("missing: %d %d\n\r", fragmentNumber, count);
-
-    // found index
-    if (count > 0)
+    BLE_DEBUG("btc: write\r\n");
+    
+    if (internalState == BT_STATE_READY)
     {
-        /*  Send setup message.
-            When the receiver is ready for data it will send a request for fragments.
-        */
-        write_params.write_op = BLE_GATT_OP_WRITE_CMD; // write without response
-        write_params.handle = write_handle;
-        write_params.len = 5;
-
-        write_params.p_value[0] = BT_TYPE_READ_REQUEST;
-        write_params.p_value[1] = fragmentNumber; // LSB
-        write_params.p_value[2] = fragmentNumber >> 8;
-        write_params.p_value[3] = count;
-        write_params.p_value[4] = count >> 8;
-
-        sd_ble_gattc_write(connection_handle, &write_params);
-
-        DEBUG("read request: %d %d\n\r", fragmentNumber, count);
-    }
-    else
-    {
-        /*  All data received. Acknowledge data reception by requesting fragment after block.
-        */
-        write_params.write_op = BLE_GATT_OP_WRITE_CMD; // write without response
-        write_params.handle = write_handle;
-        write_params.len = 5;
-
-        write_params.p_value[0] = BT_TYPE_READ_REQUEST;
-        write_params.p_value[1] = 0xFF;
-        write_params.p_value[2] = 0xFF;
-        write_params.p_value[3] = 0x01;
-        write_params.p_value[4] = 0x00;
-
-        sd_ble_gattc_write(connection_handle, &write_params);
-
-        DEBUG("read request: %d %d\n\r", readNumberOfFragments, count);
-
-        blockTransferState = BT_STATE_OFF;
-        currentReadHandler(currentReadBlock, BT_SUCCESS);
-    }
-}
-
-
-/*  Public function for transmitting a block of data and the function to be called afterwards.
-
-    block_t block->data: data pointer
-            block->length: data length
-            block->offset: The offset of this data block in relation to the overall characteristic.
-                           Useful for writing large blocks that doesn't fit in RAM all at once but
-                           must be offloaded to/read from FLASH for example.
-*/
-bt_error_t blockWrite(block_t* block, block_client_handler_t handler)
-{
-    if (blockTransferState == BT_STATE_OFF)
-    {
-        lastTime = 0;
-
-        currentWriteBlock = block;
-        currentWriteHandler = handler;
-
-        DEBUG("write: %d %s\n\r", currentWriteBlock->length, currentWriteBlock->data);
+        writeBlock = block;
 
         /*  If the block is small enough to fit a single message, use direct shortcut
             and bypass the setup process.
         */
-        if (currentWriteBlock->length <= MAX_DIRECT_WRITE_PAYLOAD_SIZE)
+        if (writeBlock->length <= MAX_DIRECT_WRITE_PAYLOAD_SIZE)
         {
-            write_params.write_op = BLE_GATT_OP_WRITE_CMD; // write with response
-            write_params.handle = write_handle;
-            write_params.len = DIRECT_WRITE_HEADER_SIZE + currentWriteBlock->length;
+            uint8_t length = 3 + writeBlock->length;
+            uint8_t writeBuffer[length];
+            
+            writeBuffer[0] = BT_TYPE_WRITE_DIRECT << 4;
+            writeBuffer[1] = writeBlock->offset;
+            writeBuffer[2] = writeBlock->offset >> 8;
+            
+            memcpy(&(writeBuffer[3]), writeBlock->data, writeBlock->length);
 
-            write_params.p_value[0] = BT_TYPE_WRITE_DIRECT;
-            write_params.p_value[1] = currentWriteBlock->offset;
-            write_params.p_value[2] = currentWriteBlock->offset >> 8;
-            memcpy(&(write_params.p_value[3]), currentWriteBlock->data, currentWriteBlock->length);
+            internalState = BT_STATE_CLIENT_WRITE_DIRECT;
 
-            blockTransferState = BT_STATE_CLIENT_WRITE_DIRECT;
-            sd_ble_gattc_write(connection_handle, &write_params);
+            writeCharacteristic.writeWoResponse(length, writeBuffer);
         }
         else
         {
             //  Find the total number of fragments needed to transmit the block
             //  based on the MTU size minus payload header.
-            writeTotalFragments = currentWriteBlock->length / MAX_BLOCK_PAYLOAD_SIZE;
+            outgoingTotalFragments = writeBlock->length / maxBlockPayloadSize;
 
-            if (writeTotalFragments * MAX_BLOCK_PAYLOAD_SIZE < currentWriteBlock->length)
+            if (outgoingTotalFragments * maxBlockPayloadSize < writeBlock->length)
             {
-                writeTotalFragments++;
+                outgoingTotalFragments++;
             }
+
+            BLE_DEBUG("btc: write setup: %d %d %d\r\n", writeBlock->length, outgoingTotalFragments, maxBlockPayloadSize);
 
             /*  Send setup message.
                 When the receiver is ready for data it will send a request for fragments.
             */
-            write_params.write_op = BLE_GATT_OP_WRITE_CMD; // write without response
-            write_params.handle = write_handle;
-            write_params.len = 7;
+            uint8_t length = 10;
+            uint8_t writeBuffer[length];
+            
+            writeBuffer[0] = BT_TYPE_WRITE_SETUP << 4;
 
-            write_params.p_value[0] = BT_TYPE_WRITE_SETUP;
-            write_params.p_value[1] = currentWriteBlock->length; // LSB
-            write_params.p_value[2] = currentWriteBlock->length >> 8;
-            write_params.p_value[3] = currentWriteBlock->offset;
-            write_params.p_value[4] = currentWriteBlock->offset >> 8;
-            write_params.p_value[5] = writeTotalFragments; // LSB
-            write_params.p_value[6] = writeTotalFragments >> 8;
+            writeBuffer[1] = writeBlock->length;
+            writeBuffer[2] = writeBlock->length >> 8;
+            writeBuffer[3] = writeBlock->length >> 16;
 
-
-            blockTransferState = BT_STATE_CLIENT_WRITE_SETUP;
-            sd_ble_gattc_write(connection_handle, &write_params);
+            writeBuffer[4] = writeBlock->offset;
+            writeBuffer[5] = writeBlock->offset >> 8;
+            writeBuffer[6] = writeBlock->offset >> 16;
+            
+            writeBuffer[7] = outgoingTotalFragments;
+            writeBuffer[8] = outgoingTotalFragments >> 8;
+            writeBuffer[9] = outgoingTotalFragments >> 16;
+            
+            internalState = BT_STATE_CLIENT_WRITE_SETUP;
+            writeCharacteristic.writeWoResponse(length, writeBuffer);
         }
-
+        
         return BT_SUCCESS;
     }
     else
@@ -293,23 +187,27 @@ bt_error_t blockWrite(block_t* block, block_client_handler_t handler)
     }
 }
 
-/*  Wrapper function for calling blockWriteSequenceRepeat() repeatedly until all buffers are full.
-    Keeps track of progress variables.
+
+/*  Send missing fragments in current batch. For each successful transmission
+    update variables to point to the next fragment.
 */
-static void blockWriteSequence()
+void BlockTransferClient::internalSendWriteReply(void)
 {
-    uint32_t result = NRF_SUCCESS;
+    BLE_DEBUG("btc: write reply\r\n");
 
-    while (writeFragmentsInBatch != 0)
+    // while there are still fragments in this batch
+    while (outgoingFragmentsInBatch != 0)
     {
-        result = blockWriteSequenceRepeat();
+        // send current fragment
+        bool result = internalSendWriteReplyRepeatedly();
 
-        DEBUG("write: %d %02X\n\r", writeFragmentIndex, result);
+        BLE_DEBUG("\t: write without response: %d %d\r\n", outgoingFragmentIndex, result);
 
-        if (result == NRF_SUCCESS)
+        // update to next fragment if successful
+        if (result)
         {
-            writeFragmentIndex++;
-            writeFragmentsInBatch--;
+            outgoingFragmentIndex++;
+            outgoingFragmentsInBatch--;
         }
         else
         {
@@ -318,422 +216,450 @@ static void blockWriteSequence()
     }
 }
 
-/*  Transmit the fragment corresponding to the current progress variables.
+/* Send the current fragment in this batch.
 */
-static uint32_t blockWriteSequenceRepeat()
+bool BlockTransferClient::internalSendWriteReplyRepeatedly(void)
 {
-    uint32_t result;
-    uint8_t length;
-    uint8_t type;
-    uint16_t index;
+    // data already sent
+    uint32_t processedLength = outgoingFragmentIndex * maxBlockPayloadSize;
 
     // find length. the last packet might be shorter.
-    // writeFragmentIndex is zero-indexed
-    length = (writeFragmentIndex < writeTotalFragments - 1) ? MAX_BLOCK_PAYLOAD_SIZE :
-                currentWriteBlock->length - ((writeTotalFragments - 1) * MAX_BLOCK_PAYLOAD_SIZE);
+    // outgoingFragmentIndex is zero-indexed
+    uint16_t payloadLength = (outgoingFragmentIndex < (outgoingTotalFragments - 1))
+                            ? maxBlockPayloadSize
+                            : writeBlock->length - processedLength;
 
     // set data type based on whether more data is pending in this batch
-    type = (writeFragmentsInBatch == 1) ? BT_TYPE_WRITE_PAYLOAD_LAST : BT_TYPE_WRITE_PAYLOAD_MORE;
+    uint8_t type = (outgoingFragmentsInBatch == 1) ? BT_TYPE_WRITE_PAYLOAD_LAST : BT_TYPE_WRITE_PAYLOAD_MORE;
 
-    write_params.write_op = BLE_GATT_OP_WRITE_CMD; // write without response
-    write_params.handle = write_handle;
-    write_params.len = BLOCK_HEADER_SIZE + length;
-    write_params.p_value[0] = type;
-    write_params.p_value[1] = writeFragmentIndex; // LSB
-    write_params.p_value[2] = writeFragmentIndex >> 8; // LSB
+    // insert header
+    uint8_t payload[BLOCK_HEADER_SIZE + payloadLength];
+    payload[0] = (type << 4) | (outgoingFragmentIndex & 0x0F);
+    payload[1] = outgoingFragmentIndex >> 4;
+    payload[2] = outgoingFragmentIndex >> 12;
 
-    index = writeFragmentIndex * MAX_BLOCK_PAYLOAD_SIZE;
-    memcpy(&(write_params.p_value[3]), &(currentWriteBlock->data[index]), length);
+    // insert payload
+    memcpy(&payload[3], &writeBlock->data[processedLength], payloadLength);
 
-    result = sd_ble_gattc_write(connection_handle, &write_params);
+    // try to send fragment
+    ble_error_t didSendValue = writeCharacteristic.writeWoResponse(BLOCK_HEADER_SIZE + payloadLength, payload);
 
-    return result;
+    return (didSendValue == BLE_ERROR_NONE);
 }
 
-
-
-
-/*  Public event handler for the Softdevice's BLE events
-*/
-void blockClientEventHandler(ble_evt_t *p_ble_evt)
+void BlockTransferClient::internalSendReadRequest()
 {
-    switch(p_ble_evt->header.evt_id)
+    // Check IndexSet if there are still missing fragments in the current block
+    if (missingFragments.getCount() > 0)
     {
-        /* GATT client events */
-        // GATTC discovery handled by SD Discovery Service
-#if 0
-        case BLE_GATTC_EVT_PRIM_SRVC_DISC_RSP:
-        case BLE_GATTC_EVT_REL_DISC_RSP:
-        case BLE_GATTC_EVT_CHAR_DISC_RSP:
-        case BLE_GATTC_EVT_DESC_DISC_RSP:
-        case BLE_GATTC_EVT_CHAR_VAL_BY_UUID_READ_RSP:
-        case BLE_GATTC_EVT_CHAR_VALS_READ_RSP:
-        case BLE_GATTC_EVT_TIMEOUT:
-            break;
-#endif
+        // find missing ranges
+        uint32_t fragmentIndex = 0;
+        uint32_t count = 0;
 
-        case BLE_GATTC_EVT_READ_RSP:
-            gattcReadEvent(p_ble_evt);
-            break;
+        missingFragments.findMissing(&fragmentIndex, &count);
 
-        case BLE_GATTC_EVT_WRITE_RSP:
-            gattcWriteEvent(p_ble_evt);
-            break;
+        // construct read request
+        uint8_t writeBuffer[7];
 
-        case BLE_GATTC_EVT_HVX:
-            gattcHVXEvent(p_ble_evt);
-            break;
+        writeBuffer[0] = BT_TYPE_READ_REQUEST << 4;
+        writeBuffer[1] = fragmentIndex;
+        writeBuffer[2] = fragmentIndex >> 8;
+        writeBuffer[3] = fragmentIndex >> 16;
+        writeBuffer[4] = count;
+        writeBuffer[5] = count >> 8;
+        writeBuffer[6] = count >> 16;
 
-        /* Common events */
-        case BLE_EVT_TX_COMPLETE:
-            commonTxEvent(p_ble_evt);
-            break;
+        writeCharacteristic.writeWoResponse(7, writeBuffer);
 
-        default:
-            break;
-    }
-}
-
-static void gattcWriteEvent(ble_evt_t *p_ble_evt)
-{
-    const ble_gattc_evt_write_rsp_t* event = &p_ble_evt->evt.gattc_evt.params.write_rsp;
-
-    if (event->handle == cccd_notification_handle)
-    {
-        lastTime = 0;
-
-        switch(blockTransferState)
-        {
-            case BT_STATE_CLIENT_SUBSCRIBE:
-                // subscribe to server read characteristic
-                DEBUG("Subscribe sent\n\r");
-                blockTransferState = BT_STATE_OFF;
-                break;
-            default:
-                break;
-        }
+        BLE_DEBUG("btc: read request: %d %d\r\n", fragmentIndex, count);
     }
     else
     {
-        DEBUG("Not a client cccd handle: %04X\n\r", event->handle);
+        // send acknowledgment for last fragment
+        uint8_t writeBuffer[7];
+
+        writeBuffer[0] = (BT_TYPE_READ_REQUEST << 4);
+        writeBuffer[1] = 0xFF;
+        writeBuffer[2] = 0xFF;
+        writeBuffer[3] = 0xFF;
+        writeBuffer[4] = 0x01;
+        writeBuffer[5] = 0x00;
+        writeBuffer[6] = 0x00;
+
+        writeCharacteristic.writeWoResponse(7, writeBuffer);
+
+        BLE_DEBUG("btc: read send ack: 0xFFFFFF 1\r\n");
+    }    
+}
+
+
+/*****************************************************************************/
+/* Event handlers                                                            */
+/*****************************************************************************/
+
+void BlockTransferClient::characteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristicP)
+{
+    BLE_DEBUG("btc: discovered characteristic\r\n");
+    
+    DiscoveredCharacteristic::Properties_t props = characteristicP->getProperties();
+    uint8_t* propPointer = (uint8_t*) &props;
+    
+    BLE_DEBUG("btc: uuid: %04X %02X %02X\r\n", characteristicP->getUUID().getShortUUID(), 
+                                               characteristicP->getValueHandle(), 
+                                               *propPointer);
+
+    if (characteristicP->getProperties().notify())
+    {
+        BLE_DEBUG("btc: char: read\r\n");
+        
+        // save local copy
+        readCharacteristic = *characteristicP;
+    }
+    else if (characteristicP->getProperties().writeWoResp())
+    {
+        BLE_DEBUG("btc: char: write\r\n");
+        
+        // save local copy
+        writeCharacteristic = *characteristicP;
+    }
+    
+    if ((readCharacteristic.getValueHandle() != GattAttribute::INVALID_HANDLE) &&
+        (writeCharacteristic.getValueHandle() != GattAttribute::INVALID_HANDLE))
+    {
+        /* Note: Yuckiness alert! The following needs to be encapsulated in a neat API.
+         * It isn't clear whether we should provide a DiscoveredCharacteristic::enableNoticiation() or
+         * DiscoveredCharacteristic::discoverDescriptors() followed by DiscoveredDescriptor::write(...). */
+        uint16_t value = BLE_HVX_NOTIFICATION;
+        ble.gattClient().write(GattClient::GATT_OP_WRITE_REQ,
+                               peripheral,
+                               readCharacteristic.getValueHandle() + 1, /* HACK Alert. We're assuming that CCCD descriptor immediately follows the value attribute. */
+                               sizeof(uint16_t),                          /* HACK Alert! size should be made into a BLE_API constant. */
+                               reinterpret_cast<const uint8_t *>(&value));
+
+        internalState = BT_STATE_READY;
+        writeDoneHandler.call();
     }
 }
 
-/*  The common event does not contain a handle to indicate which characteristic the transmission originated from.
-
-*/
-static void commonTxEvent(ble_evt_t *p_ble_evt)
+void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
 {
-    lastTime = 0;
+    BLE_DEBUG("btc: read callback\r\n");
+    
+    if (params->handle == readCharacteristic.getValueHandle())
+    {        
+#if 1    
+        for (std::size_t idx = 0; idx < params->len; idx++)
+        {
+            BLE_DEBUG("%02X", params->data[idx]);
+        }   
+        BLE_DEBUG("\r\n");
+#endif
 
-    switch(blockTransferState)
+        const uint8_t* message = params->data;
+        const bt_type_t messageType = (bt_type_t) (message[0] >> 4);
+        
+        switch(messageType)
+        {
+            case BT_TYPE_READ_DIRECT:
+                {
+                    /*  Direct read message received.
+                        Send payload to upper layer.
+                    */
+                    internalState = BT_STATE_OFF;
+
+                    /*  Guard against read block being NULL. */
+                    if (readBlock)
+                    {
+                        // payload length
+                        uint16_t currentPayloadLength = params->len - DIRECT_READ_HEADER_SIZE;
+
+                        // consider the length to avoid buffer overrun                        
+                        if (currentPayloadLength > readBlock->maxLength) 
+                        {
+                            currentPayloadLength = readBlock->maxLength;
+                        }
+                        
+                        readBlock->length = currentPayloadLength;
+
+                        // copy payload
+                        memcpy(readBlock->data, &params->data[DIRECT_READ_HEADER_SIZE], currentPayloadLength);
+
+                        /*  Signal upper layer of read request.
+                        */
+                        // note: the read done handler is a FunctionPointerWithContext and does NULL pointer checks internally
+                        readDoneHandler.call(readBlock);
+                    }
+                }
+                break;
+                
+            case BT_TYPE_READ_SETUP:
+                {
+                    // guard against retransmissions resetting the state
+                    if (internalState == BT_STATE_CLIENT_READ_SETUP)
+                    {
+                        /*  Read setup message received.
+                        */
+
+                        /*  Guard against read block being NULL. */
+                        uint32_t maxLength = 0;
+
+                        if (readBlock)
+                        {
+                            maxLength = readBlock->maxLength;
+                        }
+
+                        BLE_DEBUG("btc: read maxLength: %d\r\n", maxLength);
+
+                        if (maxLength < maxBlockPayloadSize)
+                        {
+                            /*  Buffer is not large enough to hold a single fragment.
+                                Signal client that transfer is done. The client knows
+                                something is wrong because no fragments have been sent.
+                            */
+                            missingFragments.setSize(0);
+                        }
+                        else
+                        {
+                            uint32_t setupLength;
+                            uint32_t setupFragments;
+                            
+                            // block length, number is LSB
+                            setupLength = message[3];
+                            setupLength = (setupLength << 8) | message[2];
+                            setupLength = (setupLength << 8) | message[1];
+
+                            // fragments in block, number is send LSB
+                            setupFragments = message[6];
+                            setupFragments = (setupFragments << 8) | message[5];
+                            setupFragments = (setupFragments << 8) | message[4];
+
+                            // find payload size
+                            incomingPayloadSize = setupLength / setupFragments;
+                            if (incomingPayloadSize * setupFragments < setupLength)
+                            {
+                                incomingPayloadSize++;
+                            }
+
+                            // find read length that fits the receive buffer
+                            if (setupLength > readBlock->maxLength)
+                            {
+                                setupLength = readBlock->maxLength;
+                            }
+        
+                            incomingTotalLength = setupLength;
+
+                            // find how many fragments we need to request based
+                            // on the actual read length and payload size
+                            incomingTotalFragments = incomingTotalLength / incomingPayloadSize;
+        
+                            if (incomingTotalFragments * incomingPayloadSize < incomingTotalLength)
+                            {
+                                incomingTotalFragments++;
+                            }
+
+                            // set index set size when readblock is first called
+                            missingFragments.setSize(incomingTotalFragments);
+
+                            BLE_DEBUG("btc: read setup: %d %d %d\n\r", incomingTotalLength, incomingTotalFragments, incomingPayloadSize);
+                        }
+
+                        /*  Acknowledge setup by requesting data.
+                        */
+                        internalState = BT_STATE_CLIENT_READ_REQUEST;
+                        internalSendReadRequest();
+                    }
+                }
+                break;
+            
+            default:
+                BLE_DEBUG("btc: unknown message type %02X\r\n", messageType);
+                break;
+        }                
+    }
+}
+
+void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
+{
+    if (params->handle == readCharacteristic.getValueHandle())
+    {
+        BLE_DEBUG("btc: hvx from read characteristic\r\n");
+        
+        const uint8_t* message = params->data;
+        const bt_type_t messageType = (bt_type_t) (message[0] >> 4);
+        
+        switch(messageType)
+        {
+            case BT_TYPE_WRITE_REQUEST:
+                {
+                    // received request for sending a block of data
+                    uint32_t sendFromFragment;
+                    uint32_t sendAmount;
+
+                    // fragments in block, number is send LSB
+                    sendFromFragment = message[3];
+                    sendFromFragment = (sendFromFragment << 8) | message[2];
+                    sendFromFragment = (sendFromFragment << 8) | message[1];
+
+                    // the offset of the current block with regards to the overall characteristic
+                    sendAmount = message[6];
+                    sendAmount = (sendAmount << 8) | message[5];
+                    sendAmount = (sendAmount << 8) | message[4];
+
+                    /*  If the request is within bounds it is a genuine request for fragments.
+                        Otherwise, treat it as an "all done" message.
+                    */
+                    if (sendFromFragment < outgoingTotalFragments)
+                    {
+                        outgoingFragmentIndex = sendFromFragment;
+                        outgoingFragmentsInBatch = sendAmount;
+
+                        BLE_DEBUG("btc: write request %d %d %d\r\n", outgoingFragmentIndex, outgoingFragmentsInBatch, outgoingTotalFragments);
+
+                        // send requested fragments
+                        internalSendWriteReply();
+                    }
+                    else
+                    {
+                        internalState = BT_STATE_READY;
+                        if (writeDoneHandler)
+                        {
+                            writeDoneHandler.call();
+                        }
+                        BLE_DEBUG("btc: write complete\r\n");
+                    }
+                }                    
+                break;
+                
+            case BT_TYPE_READ_NOTIFY:
+                {
+                    BLE_DEBUG("btc: read notify\r\n");
+                    if (notificationHandler)
+                    {
+                        notificationHandler.call();
+                    }
+                }
+                break;
+
+            case BT_TYPE_READ_PAYLOAD_MORE:
+            case BT_TYPE_READ_PAYLOAD_LAST:
+                {
+                    if (internalState == BT_STATE_CLIENT_READ_REQUEST)
+                    {
+                        /*  Read fragment received and it was expected
+                        */
+
+                        uint32_t fragmentIndex;
+                        fragmentIndex = message[2];
+                        fragmentIndex = (fragmentIndex << 8) | message[1];
+                        fragmentIndex = (fragmentIndex << 4) | (message[0] & 0xF);
+
+                        // check if fragment is a duplicate
+                        if (missingFragments.containsIndex(fragmentIndex))
+                        {
+                            // mark fragment as received in the index
+                            missingFragments.removeIndex(fragmentIndex);
+
+                            // copy payload to receive buffer
+                            uint32_t currentPayloadLength = params->len - BLOCK_HEADER_SIZE;
+                            uint32_t processedLength = fragmentIndex * incomingPayloadSize;
+                            memcpy(&readBlock->data[processedLength], &params->data[BLOCK_HEADER_SIZE], currentPayloadLength);
+
+                            BLE_DEBUG("\t: fragment : %5d : ", fragmentIndex);
+#if 1
+                            for (int idx = 0; idx < currentPayloadLength; idx++)
+                            {
+                                BLE_DEBUG("%02X", message[idx]);
+                            }
+                            BLE_DEBUG(" : ");
+#endif
+                            BLE_DEBUG("%4d\r\n", processedLength);
+
+                            /*  When sender signals "no more data", request missing fragments
+                                or signal reception complete.
+                            */
+                            if (messageType == BT_TYPE_READ_PAYLOAD_LAST)
+                            {
+                                if (missingFragments.getCount() == 0)
+                                {
+                                    // all done, reset state
+                                    internalState = BT_STATE_OFF;
+
+                                    // update block offset and length
+                                    readBlock->length = processedLength + currentPayloadLength;
+
+                                    // signal upper layer of write request
+                                    readDoneHandler.call(readBlock);
+                                }
+
+                                // request missing fragments or acknowledge the reception of the last fragment
+                                internalSendReadRequest();
+                            }
+                        }
+                        else
+                        {
+                            BLE_DEBUG("btc: read duplicate %d\r\n", fragmentIndex);
+                        }
+                    }
+                }
+                break;
+                            
+            default:
+                BLE_DEBUG("btc: unknown type %02X\r\n", messageType);
+                break;
+        }                    
+    }
+}
+
+void BlockTransferClient::internalDataSent(unsigned count)
+{
+    BLE_DEBUG("btc: data sent %d\r\n", count);
+
+    switch(internalState)
     {
         case BT_STATE_CLIENT_WRITE_DIRECT:
             // direct write payload complete
-            DEBUG("Direct payload sent\n\r");
+            BLE_DEBUG("btc: direct payload sent\n\r");
 
-            blockTransferState = BT_STATE_OFF;
-            currentWriteHandler(currentWriteBlock, BT_SUCCESS);
+            internalState = BT_STATE_READY;
+            if (writeDoneHandler)
+            {
+                writeDoneHandler.call();
+            }
             break;
 
         case BT_STATE_CLIENT_WRITE_SETUP:
             // bulk write setup complete
-            DEBUG("Write setup sent\n\r");
+            BLE_DEBUG("btc: write setup sent\n\r");
 
             // wait for write requests
-            blockTransferState = BT_STATE_CLIENT_WRITE_PAYLOAD;
+            internalState = BT_STATE_CLIENT_WRITE_PAYLOAD;
             break;
 
         case BT_STATE_CLIENT_WRITE_PAYLOAD:
             // bulk write payload complete
-            DEBUG("Payload sent\n\r");
+            BLE_DEBUG("btc: payload sent\n\r");
 
             // process next payload in write sequence
-            blockWriteSequence();
+            internalSendWriteReply();
             break;
 
         case BT_STATE_CLIENT_READ_ACK:
             // bulk read transfer ack complete
-            blockTransferState = BT_STATE_OFF;
+//            internalState = BT_STATE_READY;
             break;
 
+        case BT_STATE_READY:
         case BT_STATE_OFF: // do nothing; same as default
         default:
             break;
     }
-
 }
 
-
-
-static void gattcReadEvent(ble_evt_t *p_ble_evt)
+/* Connection disconnected. Reset variables and state. */
+void BlockTransferClient::onDisconnection()
 {
-    const ble_gattc_evt_read_rsp_t* event = &p_ble_evt->evt.gattc_evt.params.read_rsp;
+    BLE_DEBUG("btc: disconnected\r\n");
 
-
-    /*  Only handle read response if it belongs to the client's read characteristic,
-        since there might be other services running concurrently.
-    */
-    if (event->handle == read_handle)
-    {
-        lastTime = 0;
-
-        switch(blockTransferState)
-        {
-            case BT_STATE_CLIENT_READ_SETUP:
-                // received direct read data
-                if (event->data[0] == BT_TYPE_READ_DIRECT)
-                {
-                    // consider the length to avoid buffer overrun
-                    uint16_t length = (event->len > currentReadBlock->length) ? currentReadBlock->length : event->len;
-
-                    // copy message to block buffer
-                    memcpy(currentReadBlock->data, &(event->data[1]), length);
-
-                    // set the length to the actual size of the data and not the size of the buffer
-                    currentReadBlock->length = length;
-
-                    blockTransferState = BT_STATE_OFF;
-                    currentReadHandler(currentReadBlock, BT_SUCCESS);
-                }
-                else if (event->data[0] == BT_TYPE_READ_SETUP)
-                {
-                    // consider the length to avoid buffer overrun
-                    uint16_t availableLength;
-                    uint16_t availableFragments;
-                    uint16_t currentLength;
-
-                    // read characteristic size on server
-                    availableLength = event->data[2];
-                    availableLength = (availableLength << 8) | event->data[1];
-
-                    // fragments on server
-                    availableFragments = event->data[4];
-                    availableFragments = (availableFragments << 8) | event->data[3];
-
-                    // find payload size
-                    readPayloadSize = availableLength / availableFragments;
-                    if (readPayloadSize * availableFragments < availableLength)
-                    {
-                        readPayloadSize++;
-                    }
-
-                    // find read length that fits the receive buffer
-                    currentLength = (availableLength > currentReadBlock->length) ?
-                                                currentReadBlock->length : availableLength;
-                    currentReadBlock->length = currentLength;
-
-                    // find how many fragments we need to request based
-                    // on the actual read length and payload size
-                    readNumberOfFragments = currentLength / readPayloadSize;
-
-                    if (readNumberOfFragments * readPayloadSize < currentLength)
-                    {
-                        readNumberOfFragments++;
-                    }
-
-                    // check for index set size when readblock is first called
-                    setIndexSetSize(&missingFragments, readNumberOfFragments);
-
-                    DEBUG("Read request: %d %d %d\n\r", currentLength, readNumberOfFragments, readPayloadSize);
-
-                    blockTransferState = BT_STATE_CLIENT_READ_REQUEST;
-                    blockReadRequestMissing();
-                }
-                else
-                {
-                    DEBUG("Unexpected event message\n\r");
-                }
-                break;
-            default:
-                DEBUG("Unexpected state %02X\n\r", blockTransferState);
-        }
-    }
-    else
-    {
-        DEBUG("Not a client read handle: %04X\n\r", event->handle);
-    }
+    internalState = BT_STATE_OFF;
 }
-
-static void gattcHVXEvent(ble_evt_t *p_ble_evt)
-{
-    const ble_gattc_evt_hvx_t* event = &p_ble_evt->evt.gattc_evt.params.hvx;
-
-    if (event->handle == read_handle)
-    {
-        lastTime = 0;
-
-        switch(blockTransferState)
-        {
-            case BT_STATE_CLIENT_WRITE_PAYLOAD:
-                // received request for sending a block of data
-                if (event->data[0] == BT_TYPE_WRITE_REQUEST)
-                {
-                    uint16_t sendFromFragment;
-                    uint16_t sendAmount;
-
-                    // fragment index to send from
-                    sendFromFragment = event->data[2];
-                    sendFromFragment = (sendFromFragment << 8) | event->data[1];
-
-                    // number of fragments requested
-                    sendAmount = event->data[4];
-                    sendAmount = (sendAmount << 8) | event->data[3];
-
-                    // send fragments if request is within the valid range
-                    if (sendFromFragment < writeTotalFragments)
-                    {
-                        DEBUG("Send %d\n\r", sendFromFragment);
-
-                        // arm blockWriteSequence()
-                        writeFragmentIndex = sendFromFragment;
-                        writeFragmentsInBatch = sendAmount;
-
-                        blockWriteSequence();
-                    }
-                    else
-                    {
-                        // the request was out-of-range which means all messages
-                        // has been received
-                        blockTransferState = BT_STATE_OFF;
-                        currentWriteHandler(currentWriteBlock, BT_SUCCESS);
-                    }
-
-                }
-                else
-                {
-                    DEBUG("Unexpected event message\n\r");
-                }
-                break;
-            case BT_STATE_CLIENT_READ_REQUEST:
-                if ((event->data[0] == BT_TYPE_READ_PAYLOAD_MORE))
-                {
-                    uint16_t fragmentNumber;
-                    uint16_t blockIndex;
-
-                    fragmentNumber = event->data[2];
-                    fragmentNumber = (fragmentNumber << 8) | event->data[1];
-
-                    blockIndex = fragmentNumber * MAX_BLOCK_PAYLOAD_SIZE;
-
-                    memcpy(&(currentReadBlock->data[blockIndex]), &(event->data[3]), event->len - 3),
-                    removeIndex(&missingFragments, fragmentNumber);
-
-                    DEBUG("%d\n\r", fragmentNumber);
-                }
-                else if (event->data[0] == BT_TYPE_READ_PAYLOAD_LAST)
-                {
-                    uint16_t fragmentNumber;
-                    uint16_t blockIndex;
-
-                    fragmentNumber = event->data[2];
-                    fragmentNumber = (fragmentNumber << 8) | event->data[1];
-
-                    blockIndex = fragmentNumber * MAX_BLOCK_PAYLOAD_SIZE;
-
-                    memcpy(&(currentReadBlock->data[blockIndex]), &(event->data[3]), event->len - 3),
-                    removeIndex(&missingFragments, fragmentNumber);
-
-                    DEBUG("%d\n\r", fragmentNumber);
-
-                    blockReadRequestMissing();
-                }
-
-
-
-                break;
-            default:
-                DEBUG("Unexpected state %02X\n\r", blockTransferState);
-        }
-    }
-    else
-    {
-        DEBUG("Not a client read handle: %04X\n\r", event->handle);
-    }
-}
-
-#if 0
-
-void blockMainLoop()
-{
-    mbed_led2 = !mbed_led2;
-
-    if (lastTime > 2)
-    {
-        switch(blockTransferState)
-        {
-            case BT_STATE_CLIENT_SUBSCRIBE:
-                break;
-            case BT_STATE_CLIENT_WRITE_DIRECT:
-                // retransmit direct message
-                sd_ble_gattc_write(connection_handle, &write_params);
-                break;
-            case BT_STATE_CLIENT_WRITE_SETUP:
-            case BT_STATE_CLIENT_WRITE_PAYLOAD:
-                // retransmit setup message
-                {
-                    uint32_t error = sd_ble_gattc_write(connection_handle, &write_params);
-                    DEBUG("write setup: %d\n\r", error);
-                }
-                break;
-#if 0
-                // reconstruct the last payload
-                writeFragmentIndex--;
-                writeFragmentsInBatch = 1;
-
-                blockWriteSequence();
-                break;
-#endif
-            case BT_STATE_CLIENT_READ_SETUP:
-                // no response to read request, retransmit
-                {
-                    uint32_t error = sd_ble_gattc_read(connection_handle, read_handle, currentReadBlock->offset);
-                    DEBUG("read setup: %d\n\r", error);
-                }
-                break;
-            case BT_STATE_CLIENT_READ_REQUEST:
-                DEBUG("resend read request");
-                blockReadRequestMissing();
-                break;
-            case BT_STATE_OFF:
-            default:
-                break;
-        }
-
-        DEBUG("tick: %d\n\r", watch.read_ms());
-        lastTime = 0;
-    }
-
-}
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-void TIMER1_IRQHandler()
-{
-    NRF_TIMER1->EVENTS_COMPARE[3] = 0;
-    NRF_TIMER1->CC[3]             =  0x8000;
-    NRF_TIMER1->TASKS_START = 1;
-
-//    mbed_led1 = !mbed_led1;
-
-    lastTime++;
-
-    if (lastTime > 5)
-    {
-        NVIC_SetPendingIRQ(SWI0_IRQn);
-    }
-    else if (lastTime > 10)
-    {
-        NVIC_SetPendingIRQ(RTC1_IRQn);
-        lastTime = 0;
-    }
-
-    app_timer_cnt_get(&timercounts);
-
-}
-#ifdef __cplusplus
-}
-#endif
-#endif
 
