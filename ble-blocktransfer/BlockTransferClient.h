@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
- 
+
 #ifndef __BLOCKTRANSFERCLIENT_H__
 #define __BLOCKTRANSFERCLIENT_H__
 
@@ -24,6 +24,7 @@
 #include "ble/DiscoveredService.h"
 
 #include "ble-blocktransfer/BlockTransfer.h"
+#include "ble-blocktransfer/Block.h"
 #include "ble-blocktransfer/IndexSet.h"
 
 typedef enum
@@ -31,6 +32,8 @@ typedef enum
     BT_SUCCESS = 0,
     BT_ERROR = 1
 } bt_error_t;
+
+void bridgeCharacteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristicP);
 
 class BlockTransferClient
 {
@@ -53,79 +56,79 @@ public:
     * @param        &uuid           Service UUID for the Block Transfer Service.
     * @param        securityMode    Security mode required.
     */
-    BlockTransferClient(void (*clientReady)(void),
-                        BLE& _ble, 
-                        const UUID& uuid, 
-                        Gap::Handle_t);
+    BlockTransferClient(BLE& _ble,
+                        const UUID& uuid,
+                        Gap::Handle_t,
+                        void (*clientReady)(void));
 
     template <typename T>
-    BlockTransferClient(T* object, 
-                        void (*clientReady)(void),
-                        BLE& _ble, 
-                        const UUID& uuid, 
-                        Gap::Handle_t)
+    BlockTransferClient(BLE& _ble,
+                        const UUID& uuid,
+                        Gap::Handle_t _peripheral,
+                        T* object,
+                        void (T::*member)(void))
         :   ble(_ble),
             peripheral(_peripheral),
             internalState(BT_STATE_OFF)
     {
-        writeDoneHandler.attach(object, clientReady);
+        writeDoneHandler.attach(object, member);
 
         ble.gattServer().onDataSent(this, &BlockTransferClient::internalDataSent);
-    
+
         ble.gattClient().launchServiceDiscovery(peripheral,
                                                 NULL,
-                                                characteristicDiscoveryCallback,
+                                                bridgeCharacteristicDiscoveryCallback,
                                                 uuid);
     }
-    
+
 
     /*  Read
     */
-    bt_error_t read(block_t* buffer, void (*readDone)(block_t*))
+    bt_error_t read(Block* buffer, void (*readDone)(Block*))
     {
         readDoneHandler.attach(readDone);
-        
+
         return internalRead(buffer);
     }
-    
+
     template <typename T>
-    bt_error_t read(block_t* buffer, T* object, void (T::*member)(block_t*))
+    bt_error_t read(Block* buffer, T* object, void (T::*member)(Block*))
     {
         readDoneHandler.attach(object, member);
-        
+
         return internalRead(buffer);
     }
-    
+
     /*  Write
     */
-    bt_error_t write(block_t* buffer, void (*writeDone)(void))
+    bt_error_t write(Block* buffer, void (*writeDone)(void))
     {
         writeDoneHandler.attach(writeDone);
-        
+
         return internalWrite(buffer);
     }
-    
+
     template <typename T>
-    bt_error_t write(block_t* buffer, T* object, void (T::*member)(void))
+    bt_error_t write(Block* buffer, T* object, void (T::*member)(void))
     {
         writeDoneHandler.attach(object, member);
-        
+
         return internalWrite(buffer);
     }
-    
+
     /*  Notications
     */
     void onNotification(void (*_notificationHandler)(void))
     {
         notificationHandler.attach(_notificationHandler);
     }
-    
+
     template <typename T>
     void onNotification(T* object, void (T::*member)(void))
     {
         notificationHandler.attach(object, member);
     }
-        
+
     /*  Helper methods
     */
     void characteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristic);
@@ -133,28 +136,28 @@ public:
     void readCallback(const GattReadCallbackParams* params);
 
 private:
-    bt_error_t internalRead(block_t* buffer);
-    bt_error_t internalWrite(block_t* buffer);
+    bt_error_t internalRead(Block* buffer);
+    bt_error_t internalWrite(Block* buffer);
     void internalDataSent(unsigned count);
 
     void internalSendWriteReply();
     bool internalSendWriteReplyRepeatedly();
     void internalSendReadRequest();
 
-    void onDisconnection();    
+    void internalOnDisconnection();
 private:
     BLE& ble;
     Gap::Handle_t peripheral;
 
-    FunctionPointerWithContext<block_t*> readDoneHandler;
+    FunctionPointerWithContext<Block*> readDoneHandler;
     FunctionPointer writeDoneHandler;
     FunctionPointer notificationHandler;
-    
+
     DiscoveredCharacteristic readCharacteristic;
     DiscoveredCharacteristic writeCharacteristic;
-    
-    block_t* writeBlock;
-    block_t* readBlock;
+
+    Block* writeBlock;
+    Block* readBlock;
 
 
     /*  Internal variables for keeping track of outgoing fragments in a batch.
@@ -169,11 +172,11 @@ private:
     uint32_t incomingTotalFragments;
     uint32_t incomingTotalLength;
     uint16_t incomingPayloadSize;
-    
+
     /*  Bitmap for keeping track of "missing" fragments.
         Note: if the BLE stack is working properly, fragments should never be missing.
     */
-    IndexSet<30> missingFragments;
+    IndexSet<MAX_INDEX_SET_SIZE> missingFragments;
 
     /*  Internal variable containing the current MTU size.
     */

@@ -1,12 +1,8 @@
 #ifndef __BLOCKTRANSFER_H__
 #define __BLOCKTRANSFER_H__
 
-#include <stdint.h>
-
-#include "mbed.h"
-
-#include "ble-blocktransfer/Block.h"
-
+/* allocate space to keep track of missing fragments */
+#define MAX_BLOCK_TRANSFER_SIZE         (1024 * 10)
 
 /* message types */
 typedef enum
@@ -24,10 +20,6 @@ typedef enum
     BT_TYPE_READ_NOTIFY         = 0x0A
 } bt_type_t;
 
-
-
-
-
 /* size constants */
 #define BTS_MTU_SIZE_DEFAULT        20
 #define DIRECT_READ_HEADER_SIZE     1
@@ -38,6 +30,8 @@ typedef enum
 #define MAX_DIRECT_READ_PAYLOAD_SIZE    (BTS_MTU_SIZE_DEFAULT - DIRECT_READ_HEADER_SIZE)
 #define MAX_DIRECT_WRITE_PAYLOAD_SIZE   (BTS_MTU_SIZE_DEFAULT - DIRECT_WRITE_HEADER_SIZE)
 
+#define MAX_NUMBER_OF_FRAGMENTS         ((MAX_BLOCK_TRANSFER_SIZE + (MAX_BLOCK_PAYLOAD_SIZE - 1)) / MAX_BLOCK_PAYLOAD_SIZE)
+#define MAX_INDEX_SET_SIZE              ((MAX_NUMBER_OF_FRAGMENTS + 7) / 8)
+
+
 #endif // __BLOCKTRANSFER_H__
-
-

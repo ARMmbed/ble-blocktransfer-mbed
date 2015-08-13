@@ -18,13 +18,13 @@
 #define __BLOCKTRANSFERSERVICE_H__
 
 #include "mbed.h"
-#include "UUID.h"
 #include "ble/BLE.h"
 
+#include "ble-blocktransfer/BlockTransfer.h"
+#include "ble-blocktransfer/Block.h"
+#include "ble-blocktransfer/IndexSet.h"
 #include "ble-blocktransfer/FunctionPointerWithContext.h"
 #include "ble-blocktransfer/FunctionPointerWithContextAndReturnValue.h"
-#include "ble-blocktransfer/BlockTransfer.h"
-#include "ble-blocktransfer/IndexSet.h"
 
 /**
 * @class BlockTransferService
@@ -60,15 +60,15 @@ public:
     *
     * @param        writeHandler    This function is called when data has been written to the
     *                               writeCharacteristic. The function can either return the same
-    *                               block_t pointer or swap it with a different one for better
+    *                               Block pointer or swap it with a different one for better
     *                               memory management.
     * @param        writeBlock      The initial datastructure pointing to the buffer set a side for
     *                               receiving data.
     */
-    void setWriteAuthorizationCallback(block_t* (*writeHandler)(block_t*), block_t* _writeBlock);
+    void setWriteAuthorizationCallback(Block* (*writeHandler)(Block*), Block* _writeBlock);
 
     template <typename T>
-    void setWriteAuthorizationCallback(T *object, block_t* (T::*member)(block_t*), block_t* _writeBlock)
+    void setWriteAuthorizationCallback(T *object, Block* (T::*member)(Block*), Block* _writeBlock)
     {
         /*  Guard against resetting callback and write block while in the middle of a transfer. */
         if (internalState == BT_STATE_OFF)
@@ -82,7 +82,7 @@ public:
     * Set "read requested" callback function.
     *
     * The function is called when a client wants to read the Block Transfer service.
-    * The function can modify the block_t fields 'uint8_t* data' and 'uint32_t length'
+    * The function can modify the Block fields 'uint8_t* data' and 'uint32_t length'
     * to return the data to be sent back to the client.
     *
     * Setting the length to '0' means the read request was denied.
@@ -92,10 +92,10 @@ public:
     *                               to be read. The function can also refuse the operation by
     *                               setting the length to zero.
     */
-    void setReadAuthorizationCallback(void (*readHandler)(block_t*));
+    void setReadAuthorizationCallback(void (*readHandler)(Block*));
 
     template <typename T>
-    void setReadAuthorizationCallback(T *object, void (T::*member)(block_t*))
+    void setReadAuthorizationCallback(T *object, void (T::*member)(Block*))
     {
         /*  Guard against resetting callback while in the middle of a transfer. */
         if (internalState == BT_STATE_OFF)
@@ -137,21 +137,21 @@ private:
 
     /*  Handles for callback functions.
     */
-    FunctionPointerWithContext<block_t*>                         readRequestHandler;
-    FunctionPointerWithContextAndReturnValue<block_t*, block_t*> writeDoneHandler;
+    FunctionPointerWithContext<Block*>                         readRequestHandler;
+    FunctionPointerWithContextAndReturnValue<Block*, Block*> writeDoneHandler;
 
     /*  Pointer to a data structure which contains the writeTo (receive) buffer.
         Upon reception, the pointer can be used for swapping buffers instead of copying them.
     */
-    block_t* writeBlock;
+    Block* writeBlock;
 
     /*  BLE characteristics the block transfer is built upon.
     */
     uint8_t receiveBuffer[BTS_MTU_SIZE_DEFAULT];
     uint8_t sendBuffer[BTS_MTU_SIZE_DEFAULT];
 
-    GattCharacteristic*  writeToCharacteristic;
-    GattCharacteristic*  readFromCharacteristic;
+    GattCharacteristic readFromCharacteristic;
+    GattCharacteristic writeToCharacteristic;
 
     GattAttribute::Handle_t readFromHandle;
     GattAttribute::Handle_t writeToHandle;
@@ -159,8 +159,7 @@ private:
     /*  Data structure pointing to the read characteristic value.
         This data structure can be updated everytime a read request is received.
     */
-    block_t* readBlock;
-    block_t readBlockData;
+    Block readBlock;
 
     /*  Internal variables for keeping track of how many fragments have been read in a batch.
     */
@@ -180,7 +179,7 @@ private:
     */
 //    uint8_t indexBuffer[30];
 //    index_t receiveBlockMissingFragments;
-    IndexSet<30> missingFragments;
+    IndexSet<MAX_INDEX_SET_SIZE> missingFragments;
 
     /*  Internal variable containing the current MTU size.
     */
