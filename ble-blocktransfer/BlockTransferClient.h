@@ -24,14 +24,11 @@
 #include "ble/DiscoveredService.h"
 
 #include "ble-blocktransfer/BlockTransfer.h"
-#include "ble-blocktransfer/Block.h"
 #include "ble-blocktransfer/IndexSet.h"
 
-typedef enum
-{
-    BT_SUCCESS = 0,
-    BT_ERROR = 1
-} bt_error_t;
+#include "mbed-block/Block.h"
+#include "mbed-block/BlockStatic.h"
+#include "mbed-block/BlockCollection.h"
 
 void bridgeCharacteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristicP);
 
@@ -84,7 +81,7 @@ public:
 
     /*  Read
     */
-    bt_error_t read(Block* buffer, void (*readDone)(Block*))
+    ble_error_t read(Block* buffer, void (*readDone)(Block*))
     {
         readDoneHandler.attach(readDone);
 
@@ -92,7 +89,7 @@ public:
     }
 
     template <typename T>
-    bt_error_t read(Block* buffer, T* object, void (T::*member)(Block*))
+    ble_error_t read(Block* buffer, T* object, void (T::*member)(Block*))
     {
         readDoneHandler.attach(object, member);
 
@@ -101,7 +98,7 @@ public:
 
     /*  Write
     */
-    bt_error_t write(Block* buffer, void (*writeDone)(void))
+    ble_error_t write(Block* buffer, void (*writeDone)(void))
     {
         writeDoneHandler.attach(writeDone);
 
@@ -109,7 +106,7 @@ public:
     }
 
     template <typename T>
-    bt_error_t write(Block* buffer, T* object, void (T::*member)(void))
+    ble_error_t write(Block* buffer, T* object, void (T::*member)(void))
     {
         writeDoneHandler.attach(object, member);
 
@@ -129,6 +126,11 @@ public:
         notificationHandler.attach(object, member);
     }
 
+    /* Check if client is ready */
+    bool writeInProgess(void);
+    bool readInProgress(void);
+    bool ready(void);
+
     /*  Helper methods
     */
     void characteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristic);
@@ -136,15 +138,30 @@ public:
     void readCallback(const GattReadCallbackParams* params);
 
 private:
-    bt_error_t internalRead(Block* buffer);
-    bt_error_t internalWrite(Block* buffer);
+    /* Internal functions for handling read and write requests. */
+    ble_error_t internalRead(Block* buffer);
+    ble_error_t internalWrite(Block* buffer);
+
+    /*  This function is called when the BLE device is ready to send more messages
+        and is shared by all characteristics.
+    */
     void internalDataSent(unsigned count);
 
-    void internalSendWriteReply();
-    bool internalSendWriteReplyRepeatedly();
-    void internalSendReadRequest();
+    /* Connection disconnected. Reset variables and state. */
+    void internalOnDisconnection(void);
 
-    void internalOnDisconnection();
+    /*  Functions for feeding individual fragments in each batch.
+    */
+    void internalSendWriteReply(void);
+    bool internalSendWriteReplyRepeatedly(void);
+
+    void internalSendReadRequest(void);
+    void internalSendReadAcknowledgement(void);
+
+    /*  Timeout function called when fragments are not received in time.
+    */
+    void fragmentTimeout(void);
+
 private:
     BLE& ble;
     Gap::Handle_t peripheral;
@@ -177,6 +194,7 @@ private:
         Note: if the BLE stack is working properly, fragments should never be missing.
     */
     IndexSet<MAX_INDEX_SET_SIZE> missingFragments;
+    Timeout timeout;
 
     /*  Internal variable containing the current MTU size.
     */

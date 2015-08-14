@@ -21,10 +21,13 @@
 #include "ble/BLE.h"
 
 #include "ble-blocktransfer/BlockTransfer.h"
-#include "ble-blocktransfer/Block.h"
 #include "ble-blocktransfer/IndexSet.h"
 #include "ble-blocktransfer/FunctionPointerWithContext.h"
 #include "ble-blocktransfer/FunctionPointerWithContextAndReturnValue.h"
+
+#include "mbed-block/Block.h"
+#include "mbed-block/BlockStatic.h"
+#include "mbed-block/BlockCollection.h"
 
 /**
 * @class BlockTransferService
@@ -39,6 +42,7 @@ public:
     typedef enum {
         BT_STATE_SERVER_READ,
         BT_STATE_SERVER_WRITE,
+        BT_STATE_SERVER_WRITE_ACK,
         BT_STATE_READY,
         BT_STATE_OFF
     } bt_state_t;
@@ -71,7 +75,7 @@ public:
     void setWriteAuthorizationCallback(T *object, Block* (T::*member)(Block*), Block* _writeBlock)
     {
         /*  Guard against resetting callback and write block while in the middle of a transfer. */
-        if (internalState == BT_STATE_OFF)
+        if (writeState == BT_STATE_OFF)
         {
             writeDoneHandler.attach(object, member);
             writeBlock = _writeBlock;
@@ -92,13 +96,13 @@ public:
     *                               to be read. The function can also refuse the operation by
     *                               setting the length to zero.
     */
-    void setReadAuthorizationCallback(void (*readHandler)(Block*));
+    void setReadAuthorizationCallback(Block* (*readHandler)(uint32_t));
 
     template <typename T>
-    void setReadAuthorizationCallback(T *object, void (T::*member)(Block*))
+    void setReadAuthorizationCallback(T *object, Block* (T::*member)(uint32_t))
     {
         /*  Guard against resetting callback while in the middle of a transfer. */
-        if (internalState == BT_STATE_OFF)
+        if (readState == BT_STATE_OFF)
         {
             readRequestHandler.attach(object, member);
         }
@@ -106,6 +110,11 @@ public:
 
     /* Send a short direct message to the client. Replacement for Handle Value Indications. */
     ble_error_t updateCharacteristicValue(const uint8_t *value, uint16_t size);
+
+    /* Check if service is ready */
+    bool writeInProgess(void);
+    bool readInProgress(void);
+    bool ready(void);
 
 private:
     /* Internal callback functions for handling read and write requests. */
@@ -130,14 +139,20 @@ private:
     */
     void sendReadReply(void);
     bool sendReadReplyRepeatedly(void);
-    void requestMissing(void);
+
+    void sendWriteRequestMissing(void);
+    void sendWriteAcknowledgement(void);
+
+    /*  Timeout function called when fragments are not received in time.
+    */
+    void fragmentTimeout(void);
 
 private:
     BLE& ble;
 
     /*  Handles for callback functions.
     */
-    FunctionPointerWithContext<Block*>                         readRequestHandler;
+    FunctionPointerWithContextAndReturnValue<uint32_t, Block*> readRequestHandler;
     FunctionPointerWithContextAndReturnValue<Block*, Block*> writeDoneHandler;
 
     /*  Pointer to a data structure which contains the writeTo (receive) buffer.
@@ -159,7 +174,7 @@ private:
     /*  Data structure pointing to the read characteristic value.
         This data structure can be updated everytime a read request is received.
     */
-    Block readBlock;
+    Block* readBlock;
 
     /*  Internal variables for keeping track of how many fragments have been read in a batch.
     */
@@ -177,9 +192,8 @@ private:
     /*  Bitmap for keeping track of "missing" fragments.
         Note: if the BLE stack is working properly, fragments should never be missing.
     */
-//    uint8_t indexBuffer[30];
-//    index_t receiveBlockMissingFragments;
     IndexSet<MAX_INDEX_SET_SIZE> missingFragments;
+    Timeout timeout;
 
     /*  Internal variable containing the current MTU size.
     */
@@ -189,7 +203,8 @@ private:
 
     /*
     */
-    bt_state_t internalState;
+    bt_state_t readState;
+    bt_state_t writeState;
 };
 
 #endif /* #ifndef __BLOCKTRANSFERSERVICE_H__ */

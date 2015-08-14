@@ -88,7 +88,7 @@ BlockTransferClient::BlockTransferClient(BLE& _ble,
     btcBridge = this;
 }
 
-bt_error_t BlockTransferClient::internalRead(Block* block)
+ble_error_t BlockTransferClient::internalRead(Block* block)
 {
     if (internalState == BT_STATE_READY)
     {
@@ -104,19 +104,15 @@ bt_error_t BlockTransferClient::internalRead(Block* block)
 
         readCharacteristic.read(readBlock->getOffset());
 
-        return BT_SUCCESS;
+        return BLE_ERROR_NONE;
     }
     else
     {
-        return BT_ERROR;
+        return BLE_STACK_BUSY;
     }
 }
 
-
-
-
-
-bt_error_t BlockTransferClient::internalWrite(Block* block)
+ble_error_t BlockTransferClient::internalWrite(Block* block)
 {
     BLE_DEBUG("btc: write\r\n");
 
@@ -179,14 +175,32 @@ bt_error_t BlockTransferClient::internalWrite(Block* block)
             writeCharacteristic.writeWoResponse(length, writeBuffer);
         }
 
-        return BT_SUCCESS;
+        return BLE_ERROR_NONE;
     }
     else
     {
-        return BT_ERROR;
+        return BLE_STACK_BUSY;
     }
 }
 
+bool BlockTransferClient::writeInProgess(void)
+{
+    return (internalState != BT_STATE_OFF);
+}
+
+bool BlockTransferClient::readInProgress(void)
+{
+    return (internalState != BT_STATE_OFF);
+}
+
+bool BlockTransferClient::ready(void)
+{
+    return (internalState == BT_STATE_OFF);
+}
+
+/*****************************************************************************/
+/* Fragment functions                                                        */
+/*****************************************************************************/
 
 /*  Send missing fragments in current batch. For each successful transmission
     update variables to point to the next fragment.
@@ -271,27 +285,54 @@ void BlockTransferClient::internalSendReadRequest()
 
         writeCharacteristic.writeWoResponse(7, writeBuffer);
 
+        // set timeout for missing fragments
+        timeout.attach_us(this, &BlockTransferClient::fragmentTimeout, FRAGMENT_TIMEOUT_US);
+
         BLE_DEBUG("btc: read request: %d %d\r\n", fragmentIndex, count);
-    }
-    else
-    {
-        // send acknowledgment for last fragment
-        uint8_t writeBuffer[7];
-
-        writeBuffer[0] = (BT_TYPE_READ_REQUEST << 4);
-        writeBuffer[1] = 0xFF;
-        writeBuffer[2] = 0xFF;
-        writeBuffer[3] = 0xFF;
-        writeBuffer[4] = 0x01;
-        writeBuffer[5] = 0x00;
-        writeBuffer[6] = 0x00;
-
-        writeCharacteristic.writeWoResponse(7, writeBuffer);
-
-        BLE_DEBUG("btc: read send ack: 0xFFFFFF 1\r\n");
     }
 }
 
+void BlockTransferClient::internalSendReadAcknowledgement()
+{
+    // send acknowledgment for last fragment
+    uint8_t writeBuffer[7];
+
+    writeBuffer[0] = (BT_TYPE_READ_REQUEST << 4);
+    writeBuffer[1] = 0xFF;
+    writeBuffer[2] = 0xFF;
+    writeBuffer[3] = 0xFF;
+    writeBuffer[4] = 0x01;
+    writeBuffer[5] = 0x00;
+    writeBuffer[6] = 0x00;
+
+    ble_error_t didSendValue = writeCharacteristic.writeWoResponse(7, writeBuffer);
+
+    if (didSendValue == BLE_ERROR_NONE)
+    {
+        BLE_DEBUG("btc: read send ack: 0xFFFFFF 1\r\n");
+
+        // all done, reset state
+        internalState = BT_STATE_OFF;
+
+        // signal upper layer of write request
+        readDoneHandler.call(readBlock);
+    }
+    else
+    {
+        // acknowledgement not sent, try again when BLE is ready
+        internalState = BT_STATE_CLIENT_READ_ACK;
+    }
+}
+
+/*  Timeout function called when fragments are not received in time.
+*/
+void BlockTransferClient::fragmentTimeout(void)
+{
+    BLE_DEBUG("btc: timeout\r\n");
+
+    // request missing fragments
+    internalSendReadRequest();
+}
 
 /*****************************************************************************/
 /* Event handlers                                                            */
@@ -541,6 +582,9 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
                 {
                     if (internalState == BT_STATE_CLIENT_READ_REQUEST)
                     {
+                        // reset timeout for missing fragments
+                        timeout.attach_us(this, &BlockTransferClient::fragmentTimeout, FRAGMENT_TIMEOUT_US);
+
                         /*  Read fragment received and it was expected
                         */
 
@@ -576,20 +620,22 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
                             */
                             if (messageType == BT_TYPE_READ_PAYLOAD_LAST)
                             {
+                                // last fragment received, cancel timeout
+                                timeout.detach();
+
                                 if (missingFragments.getCount() == 0)
                                 {
-                                    // all done, reset state
-                                    internalState = BT_STATE_OFF;
-
                                     // update block offset and length
                                     readBlock->setLength(processedLength + currentPayloadLength);
 
-                                    // signal upper layer of write request
-                                    readDoneHandler.call(readBlock);
+                                    // acknowledge the reception of the last fragment
+                                    internalSendReadAcknowledgement();
                                 }
-
-                                // request missing fragments or acknowledge the reception of the last fragment
-                                internalSendReadRequest();
+                                else
+                                {
+                                    // request missing fragments
+                                    internalSendReadRequest();
+                                }
                             }
                         }
                         else
@@ -607,10 +653,9 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
     }
 }
 
-void BlockTransferClient::internalDataSent(unsigned count)
+void BlockTransferClient::internalDataSent(unsigned)
 {
     BLE_DEBUG("btc: data sent %d\r\n", count);
-    (void)count;
 
     switch(internalState)
     {
@@ -642,8 +687,8 @@ void BlockTransferClient::internalDataSent(unsigned count)
             break;
 
         case BT_STATE_CLIENT_READ_ACK:
-            // bulk read transfer ack complete
-//            internalState = BT_STATE_READY;
+            // bulk read transfer complete, send ack
+            internalSendReadAcknowledgement();
             break;
 
         case BT_STATE_READY:

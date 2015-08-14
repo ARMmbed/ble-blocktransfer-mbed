@@ -39,14 +39,15 @@ BlockTransferService::BlockTransferService(BLE& _ble,
         writeToCharacteristic(ServiceWriteCharacteristicShortUUID,
                               receiveBuffer, 1, BTS_MTU_SIZE_DEFAULT,
                               GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE_WITHOUT_RESPONSE),
-        readBlock(),
+        readBlock(NULL),
         receiveLengthOffset(0),
         receiveFragmentOffset(0),
         receiveTotalFragments(0),
         currentMTU(BTS_MTU_SIZE_DEFAULT),
         maxBlockPayloadSize(BTS_MTU_SIZE_DEFAULT - BLOCK_HEADER_SIZE),
         maxDirectReadPayloadSize(BTS_MTU_SIZE_DEFAULT - DIRECT_READ_HEADER_SIZE),
-        internalState(BT_STATE_OFF)
+        readState(BT_STATE_OFF),
+        writeState(BT_STATE_OFF)
 {
     /*  Enable security.
     */
@@ -83,7 +84,7 @@ BlockTransferService::BlockTransferService(BLE& _ble,
 void BlockTransferService::setWriteAuthorizationCallback(Block* (*writeHandler)(Block*), Block* _writeBlock)
 {
     /*  Guard against resetting callback and write block while in the middle of a transfer. */
-    if (internalState == BT_STATE_OFF)
+    if (writeState == BT_STATE_OFF)
     {
         writeDoneHandler.attach(writeHandler);
         writeBlock = _writeBlock;
@@ -98,10 +99,10 @@ void BlockTransferService::setWriteAuthorizationCallback(Block* (*writeHandler)(
 
     Setting the length to '0' means the read request was denied.
 */
-void BlockTransferService::setReadAuthorizationCallback(void (*readHandler)(Block*))
+void BlockTransferService::setReadAuthorizationCallback(Block* (*readHandler)(uint32_t))
 {
     /*  Guard against resetting callback while in the middle of a transfer. */
-    if (internalState == BT_STATE_OFF)
+    if (readState == BT_STATE_OFF)
     {
         readRequestHandler.attach(readHandler);
     }
@@ -133,6 +134,24 @@ ble_error_t BlockTransferService::updateCharacteristicValue(const uint8_t *value
     return returnValue;
 }
 
+bool BlockTransferService::writeInProgess(void)
+{
+    return (writeState != BT_STATE_OFF);
+}
+
+bool BlockTransferService::readInProgress(void)
+{
+    return (readState != BT_STATE_OFF);
+}
+
+bool BlockTransferService::ready(void)
+{
+    return (readState == BT_STATE_OFF) && (writeState == BT_STATE_OFF);
+}
+
+/*****************************************************************************/
+/* Events                                                                    */
+/*****************************************************************************/
 
 /*  Client send a read request. Pass request to callback function which updates the read buffer block.
     Based on the length the request is:
@@ -142,68 +161,80 @@ ble_error_t BlockTransferService::updateCharacteristicValue(const uint8_t *value
 */
 void BlockTransferService::onReadRequest(GattReadAuthCallbackParams* event)
 {
-    BLE_DEBUG("bts: read event: %d\r\n", internalState);
+    BLE_DEBUG("bts: read event: %d\r\n", readState);
 
+    /*  only respond to requests directed to this Block Transfer handle
+    */
     if (event->handle == readFromHandle)
     {
-        readBlock.setOffset(event->offset);
-
-        /* call higher layer for read value */
-        readRequestHandler.call(&readBlock);
-
-        // read denied
-        if (readBlock.getLength() == 0)
+        // if busy servicing another read, respond with a read not permitted
+        if (readState != BT_STATE_OFF)
         {
             event->authorizationReply = AUTH_CALLBACK_REPLY_ATTERR_READ_NOT_PERMITTED;
         }
-        // send the message directly if it can fit in one packet
-        else if (readBlock.getLength() <= maxDirectReadPayloadSize)
-        {
-            directBlock[0] = BT_TYPE_READ_DIRECT << 4;
-
-            readBlock.memcpy(&(directBlock[1]), 0, readBlock.getLength());
-
-            event->authorizationReply = AUTH_CALLBACK_REPLY_SUCCESS;
-            event->data = directBlock;
-            event->len = readBlock.getLength() + 1;
-        }
         else
         {
-            // guard against retransmission received in the wrong state
-            if (internalState == BT_STATE_OFF)
+            /* call higher layer for read value */
+            readBlock = readRequestHandler.call(event->offset);
+
+            // check return pointer is valid
+            if (readBlock == NULL)
             {
-                /*  The block is too large to fit in one packet.
-                    Respond with a setup packet specifying the number of fragments available.
-                */
-                readTotalFragments = readBlock.getLength() / maxBlockPayloadSize;
-
-                BLE_DEBUG("bts: read: setup: %d %d %d\r\n", readBlock.getLength(), readTotalFragments, maxBlockPayloadSize);
-
-                if (readTotalFragments * maxBlockPayloadSize < readBlock.getLength())
-                {
-                    readTotalFragments++;
-                }
-
-                // update internal state
-                internalState = BT_STATE_SERVER_READ;
-
-                /*  Respond with setup message.
-                    When the receiver is ready for data it will request fragments.
-                */
-                directBlock[0] = BT_TYPE_READ_SETUP << 4;
-                directBlock[1] = readBlock.getLength();
-                directBlock[2] = readBlock.getLength() >> 8;
-                directBlock[3] = readBlock.getLength() >> 16;
-                directBlock[4] = readTotalFragments;
-                directBlock[5] = readTotalFragments >> 8;
-                directBlock[6] = readTotalFragments >> 16;
-
-                event->authorizationReply = AUTH_CALLBACK_REPLY_SUCCESS;
-                event->data = directBlock;
-                event->len = 7;
+                event->authorizationReply = AUTH_CALLBACK_REPLY_ATTERR_READ_NOT_PERMITTED;
             }
-        }
-    }
+            else
+            {
+                // read denied
+                if (readBlock->getLength() == 0)
+                {
+                    event->authorizationReply = AUTH_CALLBACK_REPLY_ATTERR_READ_NOT_PERMITTED;
+                }
+                // send the message directly if it can fit in one packet
+                else if (readBlock->getLength() <= maxDirectReadPayloadSize)
+                {
+                    directBlock[0] = BT_TYPE_READ_DIRECT << 4;
+
+                    readBlock->memcpy(&(directBlock[1]), 0, readBlock->getLength());
+
+                    event->authorizationReply = AUTH_CALLBACK_REPLY_SUCCESS;
+                    event->data = directBlock;
+                    event->len = readBlock->getLength() + 1;
+                }
+                else
+                {
+                    /*  The block is too large to fit in one packet.
+                        Respond with a setup packet specifying the number of fragments available.
+                    */
+                    readTotalFragments = readBlock->getLength() / maxBlockPayloadSize;
+
+                    BLE_DEBUG("bts: read: setup: %d %d %d\r\n", readBlock->getLength(), readTotalFragments, maxBlockPayloadSize);
+
+                    if (readTotalFragments * maxBlockPayloadSize < readBlock->getLength())
+                    {
+                        readTotalFragments++;
+                    }
+
+                    // update read state
+                    readState = BT_STATE_SERVER_READ;
+
+                    /*  Respond with setup message.
+                        When the receiver is ready for data it will request fragments.
+                    */
+                    directBlock[0] = BT_TYPE_READ_SETUP << 4;
+                    directBlock[1] = readBlock->getLength();
+                    directBlock[2] = readBlock->getLength() >> 8;
+                    directBlock[3] = readBlock->getLength() >> 16;
+                    directBlock[4] = readTotalFragments;
+                    directBlock[5] = readTotalFragments >> 8;
+                    directBlock[6] = readTotalFragments >> 16;
+
+                    event->authorizationReply = AUTH_CALLBACK_REPLY_SUCCESS;
+                    event->data = directBlock;
+                    event->len = 7;
+                }
+            } // end "is readBlock NULL"
+        } // end "is the server busy"
+    } // end "is this the correct gatt handle"
 }
 
 
@@ -232,7 +263,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
             case BT_TYPE_WRITE_SETUP:
                 {
                     // guard against retransmissions resetting the state
-                    if (internalState == BT_STATE_OFF)
+                    if (writeState == BT_STATE_OFF)
                     {
                         /*  Write setup message received.
                         */
@@ -277,16 +308,19 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                             receiveTotalFragments = (receiveTotalFragments << 8) | message[8];
                             receiveTotalFragments = (receiveTotalFragments << 8) | message[7];
 
-                            if (receiveTotalLength > maxLength)
+                            // use the fragement count directly if the block fits
+                            if (receiveTotalLength <= maxLength)
                             {
-                                // find max fragments in writeBlock
-                                receiveTotalFragments = maxLength / maxBlockPayloadSize;
+                                // use IndexSet to keep track of the received fragments and find those missing
+                                missingFragments.setSize(receiveTotalFragments);
+                            }
+                            else
+                            {
+                                // find the maximum number of fragments that fits the block
+                                missingFragments.setSize(maxLength / maxBlockPayloadSize);
                             }
 
-                            // use IndexSet to keep track of the received fragments and find those missing
-                            missingFragments.setSize(receiveTotalFragments);
-
-                            internalState = BT_STATE_SERVER_WRITE;
+                            writeState = BT_STATE_SERVER_WRITE;
 
                             BLE_DEBUG("bts: write setup fragments (%d) (%d)\r\n", receiveTotalFragments, maxBlockPayloadSize);
                         }
@@ -294,7 +328,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
 
                     /*  Acknowledge setup by requesting data.
                     */
-                    requestMissing();
+                    sendWriteRequestMissing();
                 }
 
                 break;
@@ -340,8 +374,11 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
             case BT_TYPE_WRITE_PAYLOAD_MORE:
             case BT_TYPE_WRITE_PAYLOAD_LAST:
                 {
-                    if (internalState == BT_STATE_SERVER_WRITE)
+                    if (writeState == BT_STATE_SERVER_WRITE)
                     {
+                        // fragment received, reset timeout
+                        timeout.attach_us(this, &BlockTransferService::fragmentTimeout, FRAGMENT_TIMEOUT_US);
+
                         /*  Write fragment received and it was expected
                         */
 
@@ -356,7 +393,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                         // check if fragment is a duplicate
                         if (missingFragments.containsIndex(relativeFragmentIndex))
                         {
-                            BLE_DEBUG("\t: fragment : %5d %3d : ", absoluteFragmentIndex, relativeFragmentIndex);
+                            BLE_DEBUG("\t: %5d %3d : ", absoluteFragmentIndex, relativeFragmentIndex);
 #if 0
                             for (int idx = 0; idx < event->len; idx++)
                             {
@@ -372,7 +409,11 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                             uint16_t processedLength = relativeFragmentIndex * maxBlockPayloadSize;
                             uint16_t currentPayloadLength = event->len - BLOCK_HEADER_SIZE;
 
-                            writeBlock->memcpy(processedLength, &(event->data[3]), currentPayloadLength);
+                            // NULL pointer check
+                            if (writeBlock)
+                            {
+                                writeBlock->memcpy(processedLength, &(event->data[3]), currentPayloadLength);
+                            }
 
                             BLE_DEBUG("%4d\r\n", processedLength);
 
@@ -381,51 +422,71 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                             */
                             if (messageType == BT_TYPE_WRITE_PAYLOAD_LAST)
                             {
+                                // last fragment received, cancel timeout
+                                timeout.detach();
+
                                 if (missingFragments.getCount() == 0)
                                 {
-                                    // update block offset and length
-                                    writeBlock->setOffset(receiveLengthOffset);
-                                    writeBlock->setLength(processedLength + currentPayloadLength);
-
-                                    // signal upper layer of write request
-                                    writeBlock = writeDoneHandler.call(writeBlock);
+                                    // NULL pointer check
+                                    if (writeBlock)
+                                    {
+                                        // update block offset and length
+                                        writeBlock->setOffset(receiveLengthOffset);
+                                        writeBlock->setLength(processedLength + currentPayloadLength);
+                                    }
 
                                     /*  If this is a multi-batch transfer update
                                         index set to reflect the missing fragments,
-                                        otherwise reset internal state.
+                                        and call writeDoneHandler to swap buffers.
                                     */
                                     if ((absoluteFragmentIndex + 1) < receiveTotalFragments)
                                     {
-                                        // update length offset
-                                        receiveLengthOffset += processedLength + currentPayloadLength;
+                                        // signal upper layer of write request
+                                        writeBlock = writeDoneHandler.call(writeBlock);
 
-                                        // update fragment offset
-                                        receiveFragmentOffset = absoluteFragmentIndex + 1;
+                                        if (writeBlock)
+                                        {
+                                            // update length offset
+                                            receiveLengthOffset += processedLength + currentPayloadLength;
 
-                                        // find max fragments in new writeBlock
-                                        uint16_t maxFragments = writeBlock->getMaxLength() / maxBlockPayloadSize;
+                                            // update fragment offset
+                                            receiveFragmentOffset = absoluteFragmentIndex + 1;
 
-                                        // total remaining fragments
-                                        uint16_t remainingFragments = receiveTotalFragments - (absoluteFragmentIndex + 1);
+                                            // find max fragments in new writeBlock
+                                            uint16_t maxFragments = writeBlock->getMaxLength() / maxBlockPayloadSize;
 
-                                        // check if the remaining fragments fit in a single batch transfer
-                                        uint16_t fragments = (maxFragments < remainingFragments)
-                                                            ? maxFragments : remainingFragments;
+                                            // total remaining fragments
+                                            uint16_t remainingFragments = receiveTotalFragments - (absoluteFragmentIndex + 1);
 
-                                        // use IndexSet to keep track of the received fragments and find those missing
-                                        missingFragments.setSize(fragments);
+                                            // check if the remaining fragments fit in a single batch transfer
+                                            uint16_t fragments = (maxFragments < remainingFragments)
+                                                                ? maxFragments : remainingFragments;
 
-                                        BLE_DEBUG("bts: write next batch: %d %d\r\n", receiveFragmentOffset, receiveTotalFragments);
+                                            // use IndexSet to keep track of the received fragments and find those missing
+                                            missingFragments.setSize(fragments);
+
+                                            BLE_DEBUG("bts: write next batch: %d %d\r\n", receiveFragmentOffset, receiveTotalFragments);
+
+                                            // request fragments from next batch
+                                            sendWriteRequestMissing();
+                                        }
+                                        else
+                                        {
+                                            // Error, received NULL pointer, abort transmission by sending acknowledgement
+                                            sendWriteAcknowledgement();
+                                        }
                                     }
                                     else
                                     {
-                                        // all done, reset state
-                                        internalState = BT_STATE_OFF;
+                                        // received all, acknowledge the reception of the last fragment
+                                        sendWriteAcknowledgement();
                                     }
                                 }
-
-                                // request missing fragments or acknowledge the reception of the last fragment
-                                requestMissing();
+                                else
+                                {
+                                    // request missing fragments
+                                    sendWriteRequestMissing();
+                                }
                             }
                         }
                         else
@@ -469,7 +530,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                     }
                     else
                     {
-                        internalState = BT_STATE_OFF;
+                        readState = BT_STATE_OFF;
                         BLE_DEBUG("bts: read complete\r\n");
                     }
                 }
@@ -491,21 +552,31 @@ void BlockTransferService::onDisconnection()
 {
     BLE_DEBUG("bts: disconnected\r\n");
 
-    internalState = BT_STATE_OFF;
+    readState = BT_STATE_OFF;
+    writeState = BT_STATE_OFF;
 }
 
 /*  This function is called when the BLE device is ready for more characteristic value updates
     and is shared by all characteristics.
 */
-void BlockTransferService::onDataSent(unsigned count)
+void BlockTransferService::onDataSent(unsigned)
 {
-    BLE_DEBUG("bts: hvx sent: %d\r\n", count);
+    BLE_DEBUG("bts: hvx sent\r\n");
 
-    if (internalState == BT_STATE_SERVER_READ)
+    if (readState == BT_STATE_SERVER_READ)
     {
         sendReadReply();
     }
+
+    if (writeState == BT_STATE_SERVER_WRITE_ACK)
+    {
+        sendWriteAcknowledgement();
+    }
 }
+
+/*****************************************************************************/
+/* Functions for sending fragments                                           */
+/*****************************************************************************/
 
 /*  Send missing fragments in current batch. For each successful transmission
     update variables to point to the next fragment.
@@ -539,36 +610,42 @@ void BlockTransferService::sendReadReply(void)
 */
 bool BlockTransferService::sendReadReplyRepeatedly(void)
 {
-    // data already sent
-    uint32_t processedLength = readFragmentIndex * maxBlockPayloadSize;
+    // NULL pointer check
+    if (readBlock)
+    {
+        // data already sent
+        uint32_t processedLength = readFragmentIndex * maxBlockPayloadSize;
 
-    // find length. the last packet might be shorter.
-    // readFragmentIndex is zero-indexed
-    uint16_t payloadLength = (readFragmentIndex < (readTotalFragments - 1))
-                            ? maxBlockPayloadSize
-                            : readBlock.getLength() - processedLength;
+        // find length. the last packet might be shorter.
+        // readFragmentIndex is zero-indexed
+        uint16_t payloadLength = (readFragmentIndex < (readTotalFragments - 1))
+                                ? maxBlockPayloadSize
+                                : readBlock->getLength() - processedLength;
 
-    // set data type based on whether more data is pending in this batch
-    uint8_t type = (readFragmentsInBatch == 1) ? BT_TYPE_READ_PAYLOAD_LAST : BT_TYPE_READ_PAYLOAD_MORE;
+        // set data type based on whether more data is pending in this batch
+        uint8_t type = (readFragmentsInBatch == 1) ? BT_TYPE_READ_PAYLOAD_LAST : BT_TYPE_READ_PAYLOAD_MORE;
 
-    // insert header
-    uint8_t payload[BLOCK_HEADER_SIZE + payloadLength];
-    payload[0] = (type << 4) | (readFragmentIndex & 0x0F);
-    payload[1] = readFragmentIndex >> 4;
-    payload[2] = readFragmentIndex >> 12;
+        // insert header
+        uint8_t payload[BLOCK_HEADER_SIZE + payloadLength];
+        payload[0] = (type << 4) | (readFragmentIndex & 0x0F);
+        payload[1] = readFragmentIndex >> 4;
+        payload[2] = readFragmentIndex >> 12;
 
-    // insert payload
-    readBlock.memcpy(&(payload[3]), processedLength, payloadLength);
+        // insert payload
+        readBlock->memcpy(&(payload[3]), processedLength, payloadLength);
 
-    // try to send fragment
-    ble_error_t didSendValue = ble.gattServer().write(readFromHandle, payload, BLOCK_HEADER_SIZE + payloadLength);
+        // try to send fragment
+        ble_error_t didSendValue = ble.gattServer().write(readFromHandle, payload, BLOCK_HEADER_SIZE + payloadLength);
 
-    return (didSendValue == BLE_ERROR_NONE);
+        return (didSendValue == BLE_ERROR_NONE);
+    }
+
+    return false;
 }
 
 /*  Function for requesting write fragments or signal reception complete.
 */
-void BlockTransferService::requestMissing(void)
+void BlockTransferService::sendWriteRequestMissing(void)
 {
     BLE_DEBUG("bts: write missing\r\n");
 
@@ -597,23 +674,55 @@ void BlockTransferService::requestMissing(void)
 
         ble.gattServer().write(readFromHandle, request, 7);
 
+        // set timeout for missing fragments
+        timeout.attach_us(this, &BlockTransferService::fragmentTimeout, FRAGMENT_TIMEOUT_US);
+
         BLE_DEBUG("bts: write send request: %d %d\r\n", absoluteFragmentIndex, count);
+    }
+}
+
+/*  Acknowledge all write fragments have been received.
+*/
+void BlockTransferService::sendWriteAcknowledgement()
+{
+    // send acknowledgment for last fragment
+    uint8_t request[7];
+
+    request[0] = (BT_TYPE_WRITE_REQUEST << 4);
+    request[1] = 0xFF;
+    request[2] = 0xFF;
+    request[3] = 0xFF;
+    request[4] = 0x01;
+    request[5] = 0x00;
+    request[6] = 0x00;
+
+    ble_error_t didSendValue = ble.gattServer().write(readFromHandle, request, 7);
+
+    if (didSendValue == BLE_ERROR_NONE)
+    {
+        BLE_DEBUG("bts: write send ack: 0xFFFFFF 1\r\n");
+
+        // all done, reset state
+        writeState = BT_STATE_OFF;
+
+        // signal upper layer of write request
+        writeBlock = writeDoneHandler.call(writeBlock);
     }
     else
     {
-        // send acknowledgment for last fragment
-        uint8_t request[7];
-
-        request[0] = (BT_TYPE_WRITE_REQUEST << 4);
-        request[1] = 0xFF;
-        request[2] = 0xFF;
-        request[3] = 0xFF;
-        request[4] = 0x01;
-        request[5] = 0x00;
-        request[6] = 0x00;
-
-        ble.gattServer().write(readFromHandle, request, 7);
-
-        BLE_DEBUG("bts: write send ack: 0xFFFFFF 1\r\n");
+        // acknowledgement not sent, try again when BLE is ready
+        writeState = BT_STATE_SERVER_WRITE_ACK;
     }
 }
+
+/*  Timeout function called when fragments are not received in time.
+*/
+void BlockTransferService::fragmentTimeout(void)
+{
+    BLE_DEBUG("bts: timeout\r\n");
+
+    // request missing fragments
+    sendWriteRequestMissing();
+}
+
+
