@@ -28,6 +28,7 @@
 
 #include "mbed-block/Block.h"
 #include "mbed-block/BlockStatic.h"
+#include "mbed-block/BlockStaticReadOnly.h"
 #include "mbed-block/BlockCollection.h"
 
 void bridgeCharacteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristicP);
