@@ -1,6 +1,6 @@
 {
   "name": "ble-blocktransfer-mbed",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "Block Transfer Protocol for mbed using the Bluetooth LE API",
   "keywords": [],
   "author": "Marcus Chang",
@@ -16,9 +16,15 @@
     }
   ],
   "dependencies": {
-    "mbed-drivers": "*",
-    "ble": "ARMmbed/ble",
+    "ble": "~0.4.7",
     "mbed-block": "~0.2.0"
   },
-  "targetDependencies": {}
+  "targetDependencies": {
+    "mbed-os": {
+      "mbed-drivers": "^0.6.0"
+    },
+    "mbed-classic": {
+      "mbed-classic": "^0.0.1"
+    }
+  }
 }

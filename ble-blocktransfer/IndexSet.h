@@ -13,11 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
- 
+
 #ifndef __INDEXSET_H__
 #define __INDEXSET_H__
-
-#include "mbed.h"
 
 template <std::size_t LENGTH>
 class IndexSet
@@ -27,30 +25,30 @@ public:
     {
         // set count to original size regardless of cropping
         count = bitmapInBits;
-        
+
         // convert bitmap to bytes
         uint32_t bitmapInBytes = bitmapInBits / 8;
-    
+
         if (bitmapInBytes * 8 < bitmapInBits)
         {
             bitmapInBytes++;
         }
-    
+
         // crop bitmap to fit index buffer
         if (bitmapInBytes > LENGTH)
         {
             bitmapInBytes = LENGTH;
             bitmapInBits = bitmapInBytes * 8;
         }
-    
+
         // set actual size
         indexSize = bitmapInBits;
-    
-        // set bits in bitmap    
+
+        // set bits in bitmap
         for (uint32_t idx = 0; idx < bitmapInBytes; idx++)
         {
             buffer[idx] = 0xFF;
-        }    
+        }
     }
 
     void removeIndex(uint32_t index)
@@ -61,7 +59,7 @@ public:
             uint16_t byte = index / 8;
             uint8_t bit = index - (byte * 8);
 
-            // if bit is set, remove and decement counter    
+            // if bit is set, remove and decement counter
             if ((buffer[byte] >> bit) & 0x01)
             {
                 buffer[byte] &= ~(0x01 << bit);
@@ -81,18 +79,18 @@ public:
     void findMissing(uint32_t* index, uint32_t* items)
     {
         uint32_t start = 0;
-        
+
         // find first-index-still-set
         bool retval = findFirst(&start, 1);
-    
+
         // found first-index-still-set
         if (retval)
         {
             uint32_t end = start + 1;
 
-            // find last-index-not-set    
+            // find last-index-not-set
             retval = findFirst(&end, 0);
-    
+
             // found last-index-not-set
             if (retval)
             {
@@ -113,22 +111,22 @@ public:
             *items = 0;
         }
     }
-    
+
     bool findFirst(uint32_t* index, uint8_t value)
     {
         // index in buffer
         uint32_t byte = *index / 8;
         uint8_t bit = *index - (byte * 8);
-    
+
         // byte in buffer containing last index
         uint32_t bufferInUse = indexSize / 8;
-    
+
         if (bufferInUse * 8 < indexSize)
         {
             bufferInUse++;
         }
 
-        // iterate through buffer, one byte at a time    
+        // iterate through buffer, one byte at a time
         for ( ; byte < bufferInUse; byte++)
         {
             // iterate through byte, one bit at a time
@@ -139,11 +137,11 @@ public:
                 {
                     uint16_t tmp = byte * 8 + bit;
 
-                    // check if we are within bounds before returning    
+                    // check if we are within bounds before returning
                     if (tmp < indexSize)
                     {
                         *index = tmp;
-    
+
                         return true; // success
                     }
                     else
@@ -152,10 +150,10 @@ public:
                     }
                 }
             }
-    
+
             bit = 0;
         }
-    
+
         return false; // not found
     }
 
@@ -166,7 +164,7 @@ public:
         {
             uint32_t byte = index / 8;
             uint8_t bit = index - (byte * 8);
-        
+
             return (((buffer[byte] >> bit) & 0x01) == 1);
         }
         else

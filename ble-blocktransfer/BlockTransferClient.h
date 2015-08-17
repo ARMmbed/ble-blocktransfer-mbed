@@ -17,7 +17,6 @@
 #ifndef __BLOCKTRANSFERCLIENT_H__
 #define __BLOCKTRANSFERCLIENT_H__
 
-
 #include "mbed.h"
 #include "ble/BLE.h"
 #include "ble/DiscoveredCharacteristic.h"
