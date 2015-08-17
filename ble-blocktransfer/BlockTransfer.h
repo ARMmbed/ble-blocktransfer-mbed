@@ -2,7 +2,7 @@
 #define __BLOCKTRANSFER_H__
 
 /* allocate space to keep track of missing fragments. */
-#define MAX_BLOCK_TRANSFER_SIZE         (4 * 256)
+#define MAX_BLOCK_TRANSFER_SIZE         (1024)
 
 /* maximum interval between fragments before recovery. */
 #define FRAGMENT_TIMEOUT_US             (100 * 1000)

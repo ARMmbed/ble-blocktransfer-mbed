@@ -16,15 +16,15 @@
     }
   ],
   "dependencies": {
-    "ble": "~0.4.7",
+    "ble": "~0.4.0",
     "mbed-block": "~0.2.0"
   },
   "targetDependencies": {
     "mbed-os": {
-      "mbed-drivers": "^0.6.0"
+      "mbed-drivers": "~0.6.0"
     },
     "mbed-classic": {
-      "mbed-classic": "^0.0.1"
+      "mbed-classic": "~0.0.1"
     }
   }
 }
