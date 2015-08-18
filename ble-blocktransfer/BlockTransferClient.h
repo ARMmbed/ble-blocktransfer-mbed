@@ -188,7 +188,6 @@ private:
     */
     uint32_t incomingTotalFragments;
     uint32_t incomingTotalLength;
-    uint16_t incomingPayloadSize;
 
     /*  Bitmap for keeping track of "missing" fragments.
         Note: if the BLE stack is working properly, fragments should never be missing.

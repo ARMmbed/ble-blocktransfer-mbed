@@ -17,6 +17,9 @@
 #include "ble-blocktransfer/BlockTransferClient.h"
 
 #if 0
+// increase timeout
+#undef FRAGMENT_TIMEOUT_US
+#define FRAGMENT_TIMEOUT_US (1000*1000)
 #define BLE_DEBUG(...) { printf(__VA_ARGS__); }
 #else
 #define BLE_DEBUG(...) /* nothing */
@@ -142,12 +145,7 @@ ble_error_t BlockTransferClient::internalWrite(Block* block)
         {
             //  Find the total number of fragments needed to transmit the block
             //  based on the MTU size minus payload header.
-            outgoingTotalFragments = writeBlock->getLength() / maxBlockPayloadSize;
-
-            if (outgoingTotalFragments * maxBlockPayloadSize < writeBlock->getLength())
-            {
-                outgoingTotalFragments++;
-            }
+            outgoingTotalFragments = (writeBlock->getLength() + (maxBlockPayloadSize - 1)) / maxBlockPayloadSize;
 
             BLE_DEBUG("btc: write setup: %d %d %d\r\n", writeBlock->getLength(), outgoingTotalFragments, maxBlockPayloadSize);
 
@@ -470,13 +468,6 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
                             setupFragments = (setupFragments << 8) | message[5];
                             setupFragments = (setupFragments << 8) | message[4];
 
-                            // find payload size
-                            incomingPayloadSize = setupLength / setupFragments;
-                            if (incomingPayloadSize * setupFragments < setupLength)
-                            {
-                                incomingPayloadSize++;
-                            }
-
                             // find read length that fits the receive buffer
                             if (setupLength > readBlock->getMaxLength())
                             {
@@ -487,17 +478,12 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
 
                             // find how many fragments we need to request based
                             // on the actual read length and payload size
-                            incomingTotalFragments = incomingTotalLength / incomingPayloadSize;
-
-                            if (incomingTotalFragments * incomingPayloadSize < incomingTotalLength)
-                            {
-                                incomingTotalFragments++;
-                            }
+                            incomingTotalFragments = (incomingTotalLength + (maxBlockPayloadSize - 1)) / maxBlockPayloadSize;
 
                             // set index set size when readblock is first called
                             missingFragments.setSize(incomingTotalFragments);
 
-                            BLE_DEBUG("btc: read setup: %d %d %d\n\r", incomingTotalLength, incomingTotalFragments, incomingPayloadSize);
+                            BLE_DEBUG("btc: read setup: %d %d %d\n\r", incomingTotalLength, incomingTotalFragments, maxBlockPayloadSize);
                         }
 
                         /*  Acknowledge setup by requesting data.
@@ -601,7 +587,7 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
 
                             // copy payload to receive buffer
                             uint32_t currentPayloadLength = params->len - BLOCK_HEADER_SIZE;
-                            uint32_t processedLength = fragmentIndex * incomingPayloadSize;
+                            uint32_t processedLength = fragmentIndex * maxBlockPayloadSize;
 
                             readBlock->memcpy(processedLength, &(params->data[BLOCK_HEADER_SIZE]), currentPayloadLength);
 
@@ -655,7 +641,7 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
 
 void BlockTransferClient::internalDataSent(unsigned)
 {
-    BLE_DEBUG("btc: data sent %d\r\n", count);
+    BLE_DEBUG("btc: data sent\r\n");
 
     switch(internalState)
     {

@@ -17,6 +17,9 @@
 #include "ble-blocktransfer/BlockTransferService.h"
 
 #if 0
+// increase timeout
+#undef FRAGMENT_TIMEOUT_US
+#define FRAGMENT_TIMEOUT_US (1000*1000)
 #define BLE_DEBUG(...) { printf(__VA_ARGS__); }
 #else
 #define BLE_DEBUG(...) /* nothing */
@@ -205,14 +208,9 @@ void BlockTransferService::onReadRequest(GattReadAuthCallbackParams* event)
                     /*  The block is too large to fit in one packet.
                         Respond with a setup packet specifying the number of fragments available.
                     */
-                    readTotalFragments = readBlock->getLength() / maxBlockPayloadSize;
+                    readTotalFragments = (readBlock->getLength() + (maxBlockPayloadSize - 1)) / maxBlockPayloadSize;
 
                     BLE_DEBUG("bts: read: setup: %d %d %d\r\n", readBlock->getLength(), readTotalFragments, maxBlockPayloadSize);
-
-                    if (readTotalFragments * maxBlockPayloadSize < readBlock->getLength())
-                    {
-                        readTotalFragments++;
-                    }
 
                     // update read state
                     readState = BT_STATE_SERVER_READ;
@@ -317,6 +315,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                             else
                             {
                                 // find the maximum number of fragments that fits the block
+                                // Note: this calculation is rounding down
                                 missingFragments.setSize(maxLength / maxBlockPayloadSize);
                             }
 
@@ -453,6 +452,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                                             receiveFragmentOffset = absoluteFragmentIndex + 1;
 
                                             // find max fragments in new writeBlock
+                                            // Note: this calculation is rounding down
                                             uint16_t maxFragments = writeBlock->getMaxLength() / maxBlockPayloadSize;
 
                                             // total remaining fragments
