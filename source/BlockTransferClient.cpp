@@ -29,7 +29,7 @@
 /* C to C++                                                                  */
 /*****************************************************************************/
 
-static BlockTransferClient* btcBridge;
+BlockTransferClient* btcBridge;
 
 void bridgeCharacteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristicP)
 {
@@ -39,7 +39,7 @@ void bridgeCharacteristicDiscoveryCallback(const DiscoveredCharacteristic* chara
     }
 }
 
-static void bridgeReadCallback(const GattReadCallbackParams* params)
+void bridgeReadCallback(const GattReadCallbackParams* params)
 {
     if (btcBridge)
     {
@@ -47,7 +47,7 @@ static void bridgeReadCallback(const GattReadCallbackParams* params)
     }
 }
 
-static void bridgeHVXCallback(const GattHVXCallbackParams* params)
+void bridgeHVXCallback(const GattHVXCallbackParams* params)
 {
     if (btcBridge)
     {
@@ -60,19 +60,23 @@ static void bridgeHVXCallback(const GattHVXCallbackParams* params)
 /*****************************************************************************/
 
 
-BlockTransferClient::BlockTransferClient(BLE& _ble,
-                                         const UUID& uuid,
-                                         Gap::Handle_t _peripheral,
-                                         void (*clientReady)(void))
-    :   ble(_ble),
-        peripheral(_peripheral),
-
+BlockTransferClient::BlockTransferClient()
+    :   ble(),
         currentMTU(BTS_MTU_SIZE_DEFAULT),
         maxBlockPayloadSize(BTS_MTU_SIZE_DEFAULT - BLOCK_HEADER_SIZE),
         maxDirectReadPayloadSize(BTS_MTU_SIZE_DEFAULT - DIRECT_READ_HEADER_SIZE),
         internalState(BT_STATE_OFF)
+{}
+
+void BlockTransferClient::init(void (*clientReady)(void),
+          const UUID& uuid,
+          Gap::Handle_t _peripheral)
 {
+    peripheral = _peripheral;
+
     writeDoneHandler.attach(clientReady);
+
+    ble.init();
 
     // register callback functions
     // this should be onDataWritten in gattClient, but interface does not support memberfunctions

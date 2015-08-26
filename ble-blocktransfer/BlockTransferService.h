@@ -48,14 +48,15 @@ public:
         BT_STATE_OFF
     } bt_state_t;
 
+    BlockTransferService();
+
     /**
-    * @param        &ble            BLEDevice object for the underlying controller.
     * @param        &uuid           Service UUID for the Block Transfer Service.
     * @param        securityMode    Security mode required.
     */
-    BlockTransferService(BLE& _ble, const UUID &uuid,
-                         SecurityManager::SecurityMode_t securityMode
-                         = SecurityManager::SECURITY_MODE_ENCRYPTION_OPEN_LINK);
+    void init(const UUID &uuid,
+              SecurityManager::SecurityMode_t securityMode
+              = SecurityManager::SECURITY_MODE_ENCRYPTION_OPEN_LINK);
 
     /*
     * Set "write received" callback function and write buffer.
@@ -149,7 +150,7 @@ private:
     void fragmentTimeout(void);
 
 private:
-    BLE& ble;
+    BLE ble;
 
     /*  Handles for callback functions.
     */

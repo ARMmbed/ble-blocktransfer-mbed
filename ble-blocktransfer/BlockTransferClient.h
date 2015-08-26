@@ -30,7 +30,12 @@
 #include "mbed-block/BlockStaticReadOnly.h"
 #include "mbed-block/BlockCollection.h"
 
+class BlockTransferClient;
+
 void bridgeCharacteristicDiscoveryCallback(const DiscoveredCharacteristic* characteristicP);
+void bridgeReadCallback(const GattReadCallbackParams* params);
+void bridgeHVXCallback(const GattHVXCallbackParams* params);
+extern BlockTransferClient* btcBridge;
 
 class BlockTransferClient
 {
@@ -48,27 +53,27 @@ public:
         BT_STATE_OFF
     } bt_state_t;
 
+    BlockTransferClient();
+
     /**
-    * @param        &ble            BLEDevice object for the underlying controller.
     * @param        &uuid           Service UUID for the Block Transfer Service.
     * @param        securityMode    Security mode required.
     */
-    BlockTransferClient(BLE& _ble,
-                        const UUID& uuid,
-                        Gap::Handle_t,
-                        void (*clientReady)(void));
+    void init(void (*clientReady)(void),
+              const UUID& uuid,
+              Gap::Handle_t);
 
     template <typename T>
-    BlockTransferClient(BLE& _ble,
-                        const UUID& uuid,
-                        Gap::Handle_t _peripheral,
-                        T* object,
-                        void (T::*member)(void))
-        :   ble(_ble),
-            peripheral(_peripheral),
-            internalState(BT_STATE_OFF)
+    void init(T* object,
+              void (T::*member)(void),
+              const UUID& uuid,
+              Gap::Handle_t _peripheral)
     {
+        peripheral = _peripheral;
+
         writeDoneHandler.attach(object, member);
+
+        ble.init();
 
         ble.gattServer().onDataSent(this, &BlockTransferClient::internalDataSent);
 
@@ -76,6 +81,13 @@ public:
                                                 NULL,
                                                 bridgeCharacteristicDiscoveryCallback,
                                                 uuid);
+
+        ble.gattClient().onHVX(bridgeHVXCallback);
+        ble.gattClient().onDataRead(bridgeReadCallback);
+
+        ble.gap().addToDisconnectionCallChain(this, &BlockTransferClient::internalOnDisconnection);
+
+        btcBridge = this;
     }
 
 
@@ -163,7 +175,7 @@ private:
     void fragmentTimeout(void);
 
 private:
-    BLE& ble;
+    BLE ble;
     Gap::Handle_t peripheral;
 
     FunctionPointerWithContext<Block*> readDoneHandler;

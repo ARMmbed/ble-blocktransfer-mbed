@@ -28,10 +28,8 @@
 const uint16_t ServiceWriteCharacteristicShortUUID = 0x0001;
 const uint16_t ServiceReadCharacteristicShortUUID  = 0x0002;
 
-BlockTransferService::BlockTransferService(BLE& _ble,
-                                           const UUID& uuid,
-                                           SecurityManager::SecurityMode_t securityMode)
-    :   ble(_ble),
+BlockTransferService::BlockTransferService()
+    :   ble(),
         readRequestHandler(),
         writeDoneHandler(NULL, NULL),
         writeBlock(NULL),
@@ -51,7 +49,13 @@ BlockTransferService::BlockTransferService(BLE& _ble,
         maxDirectReadPayloadSize(BTS_MTU_SIZE_DEFAULT - DIRECT_READ_HEADER_SIZE),
         readState(BT_STATE_OFF),
         writeState(BT_STATE_OFF)
+{}
+
+void BlockTransferService::init(const UUID& uuid,
+                                SecurityManager::SecurityMode_t securityMode)
 {
+    ble.init();
+
     /*  Enable security.
     */
     ble.securityManager().init();
