@@ -16,8 +16,8 @@
     }
   ],
   "dependencies": {
-    "ble": "~0.4.0",
-    "mbed-block": "~0.2.0"
+    "ble": "~0.4.8",
+    "mbed-block": "~0.2.3"
   },
   "targetDependencies": {
     "mbed-os": {
