@@ -195,7 +195,7 @@ bool BlockTransferClient::readInProgress(void)
     return (internalState != BT_STATE_OFF);
 }
 
-bool BlockTransferClient::ready(void)
+bool BlockTransferClient::isReady(void)
 {
     return (internalState == BT_STATE_OFF);
 }

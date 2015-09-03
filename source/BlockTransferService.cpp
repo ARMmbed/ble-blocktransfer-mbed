@@ -80,6 +80,7 @@ void BlockTransferService::init(const UUID& uuid,
     // register callback functions
     ble.gattServer().onDataWritten(this, &BlockTransferService::onDataWritten);
     ble.gattServer().onDataSent(this, &BlockTransferService::onDataSent);
+    ble.gap().addToConnectionCallChain(this, &BlockTransferService::onConnection);
     ble.gap().addToDisconnectionCallChain(this, &BlockTransferService::onDisconnection);
 }
 
@@ -91,7 +92,7 @@ void BlockTransferService::init(const UUID& uuid,
 void BlockTransferService::setWriteAuthorizationCallback(Block* (*writeHandler)(Block*), Block* _writeBlock)
 {
     /*  Guard against resetting callback and write block while in the middle of a transfer. */
-    if (writeState == BT_STATE_OFF)
+    if ((writeState == BT_STATE_OFF) || (writeState == BT_STATE_READY))
     {
         writeDoneHandler.attach(writeHandler);
         writeBlock = _writeBlock;
@@ -109,7 +110,7 @@ void BlockTransferService::setWriteAuthorizationCallback(Block* (*writeHandler)(
 void BlockTransferService::setReadAuthorizationCallback(Block* (*readHandler)(uint32_t))
 {
     /*  Guard against resetting callback while in the middle of a transfer. */
-    if (readState == BT_STATE_OFF)
+    if ((readState == BT_STATE_OFF) || (readState == BT_STATE_READY))
     {
         readRequestHandler.attach(readHandler);
     }
@@ -118,7 +119,7 @@ void BlockTransferService::setReadAuthorizationCallback(Block* (*readHandler)(ui
 /*  Replacement for Handle Value Notifications. Block read and write is initiated by the client.
     This function is only for sending short messages such as update notifications.
 */
-ble_error_t BlockTransferService::updateCharacteristicValue(const uint8_t *value, uint16_t size)
+ble_error_t BlockTransferService::updateCharacteristicValue(const uint8_t* value, uint16_t size)
 {
     ble_error_t returnValue = BLE_ERROR_BUFFER_OVERFLOW;
 
@@ -143,17 +144,17 @@ ble_error_t BlockTransferService::updateCharacteristicValue(const uint8_t *value
 
 bool BlockTransferService::writeInProgess(void)
 {
-    return (writeState != BT_STATE_OFF);
+    return ((writeState == BT_STATE_SERVER_WRITE) || (writeState == BT_STATE_SERVER_WRITE_ACK));
 }
 
 bool BlockTransferService::readInProgress(void)
 {
-    return (readState != BT_STATE_OFF);
+    return (readState == BT_STATE_SERVER_READ);
 }
 
-bool BlockTransferService::ready(void)
+bool BlockTransferService::isReady(void)
 {
-    return (readState == BT_STATE_OFF) && (writeState == BT_STATE_OFF);
+    return ((writeState == BT_STATE_READY) && (readState == BT_STATE_READY));
 }
 
 /*****************************************************************************/
@@ -175,7 +176,7 @@ void BlockTransferService::onReadRequest(GattReadAuthCallbackParams* event)
     if (event->handle == readFromHandle)
     {
         // if busy servicing another read, respond with a read not permitted
-        if (readState != BT_STATE_OFF)
+        if (readState != BT_STATE_READY)
         {
             event->authorizationReply = AUTH_CALLBACK_REPLY_ATTERR_READ_NOT_PERMITTED;
         }
@@ -265,7 +266,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
             case BT_TYPE_WRITE_SETUP:
                 {
                     // guard against retransmissions resetting the state
-                    if (writeState == BT_STATE_OFF)
+                    if (writeState == BT_STATE_READY)
                     {
                         /*  Write setup message received.
                         */
@@ -534,7 +535,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                     }
                     else
                     {
-                        readState = BT_STATE_OFF;
+                        readState = BT_STATE_READY;
                         BLE_DEBUG("bts: read complete\r\n");
                     }
                 }
@@ -551,7 +552,15 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
     }
 }
 
-/* Connection disconnected. Reset variables and state. */
+/* Connection status callbacks. Sets and resets variables and state. */
+void BlockTransferService::onConnection()
+{
+    BLE_DEBUG("bts: connected\r\n");
+
+    readState = BT_STATE_READY;
+    writeState = BT_STATE_READY;
+}
+
 void BlockTransferService::onDisconnection()
 {
     BLE_DEBUG("bts: disconnected\r\n");
@@ -707,7 +716,7 @@ void BlockTransferService::sendWriteAcknowledgement()
         BLE_DEBUG("bts: write send ack: 0xFFFFFF 1\r\n");
 
         // all done, reset state
-        writeState = BT_STATE_OFF;
+        writeState = BT_STATE_READY;
 
         // signal upper layer of write request
         writeBlock = writeDoneHandler.call(writeBlock);

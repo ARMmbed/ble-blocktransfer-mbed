@@ -141,7 +141,7 @@ public:
     /* Check if client is ready */
     bool writeInProgess(void);
     bool readInProgress(void);
-    bool ready(void);
+    bool isReady(void);
 
     /*  Helper methods
     */

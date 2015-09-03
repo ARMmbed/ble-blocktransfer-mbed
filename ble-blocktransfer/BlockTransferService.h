@@ -77,7 +77,7 @@ public:
     void setWriteAuthorizationCallback(T *object, Block* (T::*member)(Block*), Block* _writeBlock)
     {
         /*  Guard against resetting callback and write block while in the middle of a transfer. */
-        if (writeState == BT_STATE_OFF)
+        if (writeState == BT_STATE_READY)
         {
             writeDoneHandler.attach(object, member);
             writeBlock = _writeBlock;
@@ -104,7 +104,7 @@ public:
     void setReadAuthorizationCallback(T *object, Block* (T::*member)(uint32_t))
     {
         /*  Guard against resetting callback while in the middle of a transfer. */
-        if (readState == BT_STATE_OFF)
+        if (readState == BT_STATE_READY)
         {
             readRequestHandler.attach(object, member);
         }
@@ -116,7 +116,7 @@ public:
     /* Check if service is ready */
     bool writeInProgess(void);
     bool readInProgress(void);
-    bool ready(void);
+    bool isReady(void);
 
 private:
     /* Internal callback functions for handling read and write requests. */
@@ -134,8 +134,9 @@ private:
     */
     void onDataWritten(const GattWriteCallbackParams* event);
 
-    /* Connection disconnected. Reset variables and state. */
-    void onDisconnection();
+    /* Connection status callbacks. Sets and resets variables and state. */
+    void onConnection(void);
+    void onDisconnection(void);
 
     /*  Functions for feeding individual fragments in each batch.
     */
