@@ -85,7 +85,8 @@ public:
         ble.gattClient().onHVX(bridgeHVXCallback);
         ble.gattClient().onDataRead(bridgeReadCallback);
 
-        ble.gap().addToDisconnectionCallChain(this, &BlockTransferClient::internalOnDisconnection);
+        ble.gap().onConnection(this, &BlockTransferClient::internalOnConnection);
+        ble.gap().onDisconnection(this, &BlockTransferClient::internalOnDisconnection);
 
         btcBridge = this;
     }
@@ -159,8 +160,10 @@ private:
     */
     void internalDataSent(unsigned count);
 
+    void internalOnConnection(const Gap::ConnectionCallbackParams_t* params);
+
     /* Connection disconnected. Reset variables and state. */
-    void internalOnDisconnection(void);
+    void internalOnDisconnection(const Gap::DisconnectionCallbackParams_t* params);
 
     /*  Functions for feeding individual fragments in each batch.
     */

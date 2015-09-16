@@ -90,7 +90,8 @@ void BlockTransferClient::init(void (*clientReady)(void),
     ble.gattClient().onHVX(bridgeHVXCallback);
     ble.gattClient().onDataRead(bridgeReadCallback);
 
-    ble.gap().addToDisconnectionCallChain(this, &BlockTransferClient::internalOnDisconnection);
+    ble.gap().onConnection(this, &BlockTransferClient::internalOnConnection);
+    ble.gap().onDisconnection(this, &BlockTransferClient::internalOnDisconnection);
 
     btcBridge = this;
 }
@@ -689,10 +690,17 @@ void BlockTransferClient::internalDataSent(unsigned)
 }
 
 /* Connection disconnected. Reset variables and state. */
-void BlockTransferClient::internalOnDisconnection()
+void BlockTransferClient::internalOnDisconnection(const Gap::DisconnectionCallbackParams_t* params)
 {
     BLE_DEBUG("btc: disconnected\r\n");
 
+    (void) params;
     internalState = BT_STATE_OFF;
 }
 
+void BlockTransferClient::internalOnConnection(const Gap::ConnectionCallbackParams_t* params)
+{
+    BLE_DEBUG("btc: connected\r\n");
+
+    (void) params;
+}

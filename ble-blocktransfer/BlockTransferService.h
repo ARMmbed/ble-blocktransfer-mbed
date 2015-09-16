@@ -135,8 +135,8 @@ private:
     void onDataWritten(const GattWriteCallbackParams* event);
 
     /* Connection status callbacks. Sets and resets variables and state. */
-    void onConnection(void);
-    void onDisconnection(void);
+    void onConnection(const Gap::ConnectionCallbackParams_t* params);
+    void onDisconnection(const Gap::DisconnectionCallbackParams_t* params);
 
     /*  Functions for feeding individual fragments in each batch.
     */

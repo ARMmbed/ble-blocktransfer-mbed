@@ -80,8 +80,8 @@ void BlockTransferService::init(const UUID& uuid,
     // register callback functions
     ble.gattServer().onDataWritten(this, &BlockTransferService::onDataWritten);
     ble.gattServer().onDataSent(this, &BlockTransferService::onDataSent);
-    ble.gap().addToConnectionCallChain(this, &BlockTransferService::onConnection);
-    ble.gap().addToDisconnectionCallChain(this, &BlockTransferService::onDisconnection);
+    ble.gap().onConnection(this, &BlockTransferService::onConnection);
+    ble.gap().onDisconnection(this, &BlockTransferService::onDisconnection);
 }
 
 /*  Set "write received" callback function and write buffer.
@@ -553,18 +553,20 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
 }
 
 /* Connection status callbacks. Sets and resets variables and state. */
-void BlockTransferService::onConnection()
+void BlockTransferService::onConnection(const Gap::ConnectionCallbackParams_t* params)
 {
     BLE_DEBUG("bts: connected\r\n");
 
+    (void) params;
     readState = BT_STATE_READY;
     writeState = BT_STATE_READY;
 }
 
-void BlockTransferService::onDisconnection()
+void BlockTransferService::onDisconnection(const Gap::DisconnectionCallbackParams_t* params)
 {
     BLE_DEBUG("bts: disconnected\r\n");
 
+    (void) params;
     readState = BT_STATE_OFF;
     writeState = BT_STATE_OFF;
 }
