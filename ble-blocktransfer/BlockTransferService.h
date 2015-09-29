@@ -24,11 +24,11 @@
 #include "ble-blocktransfer/IndexSet.h"
 #include "ble-blocktransfer/FunctionPointerWithContext.h"
 #include "ble-blocktransfer/FunctionPointerWithContextAndReturnValue.h"
+#include "ble-blocktransfer/SharedPointer.h"
 
-#include "mbed-block/Block.h"
-#include "mbed-block/BlockStatic.h"
-#include "mbed-block/BlockStaticReadOnly.h"
-#include "mbed-block/BlockCollection.h"
+#include "mbed-block/BlockDynamic.h"
+
+using namespace mbed::util;
 
 /**
 * @class BlockTransferService
@@ -68,19 +68,16 @@ public:
     *                               writeCharacteristic. The function can either return the same
     *                               Block pointer or swap it with a different one for better
     *                               memory management.
-    * @param        writeBlock      The initial datastructure pointing to the buffer set a side for
-    *                               receiving data.
     */
-    void setWriteAuthorizationCallback(Block* (*writeHandler)(Block*), Block* _writeBlock);
+    void setWriteAuthorizationCallback(void (*writeHandler)(SharedPointer<Block>));
 
     template <typename T>
-    void setWriteAuthorizationCallback(T *object, Block* (T::*member)(Block*), Block* _writeBlock)
+    void setWriteAuthorizationCallback(T* object, void (T::*member)(SharedPointer<Block>))
     {
         /*  Guard against resetting callback and write block while in the middle of a transfer. */
         if (writeState == BT_STATE_READY)
         {
             writeDoneHandler.attach(object, member);
-            writeBlock = _writeBlock;
         }
     }
 
@@ -98,10 +95,10 @@ public:
     *                               to be read. The function can also refuse the operation by
     *                               setting the length to zero.
     */
-    void setReadAuthorizationCallback(Block* (*readHandler)(uint32_t));
+    void setReadAuthorizationCallback(SharedPointer<Block> (*readHandler)(uint32_t));
 
     template <typename T>
-    void setReadAuthorizationCallback(T *object, Block* (T::*member)(uint32_t))
+    void setReadAuthorizationCallback(T* object, SharedPointer<Block> (T::*member)(uint32_t))
     {
         /*  Guard against resetting callback while in the middle of a transfer. */
         if (readState == BT_STATE_READY)
@@ -111,7 +108,19 @@ public:
     }
 
     /* Send a short direct message to the client. Replacement for Handle Value Indications. */
-    ble_error_t updateCharacteristicValue(const uint8_t *value, uint16_t size);
+    ble_error_t updateCharacteristicValue(const uint8_t* value, uint16_t size);
+
+    /* Register callback for when a read request has finished */
+    void setReadDoneCallback(void (*readDoneHandler)(void));
+
+    template <typename T>
+    void setReadDoneCallback(T* object, void (T::*member)(void))
+    {
+        if ((readState == BT_STATE_OFF) || (readState == BT_STATE_READY))
+        {
+            readDoneHandler.attach(object, member);
+        }
+    }
 
     /* Check if service is ready */
     bool writeInProgess(void);
@@ -153,15 +162,20 @@ private:
 private:
     BLE ble;
 
+    /*  Connection handle for transfer in progress.
+    */
+    Gap::Handle_t connectionHandle;
+    uint8_t connectionCounter;
+
     /*  Handles for callback functions.
     */
-    FunctionPointerWithContextAndReturnValue<uint32_t, Block*> readRequestHandler;
-    FunctionPointerWithContextAndReturnValue<Block*, Block*> writeDoneHandler;
+    FunctionPointerWithContextAndReturnValue<uint32_t, SharedPointer<Block> >   readRequestHandler;
+    FunctionPointerWithContext<SharedPointer<Block> >                           writeDoneHandler;
+    FunctionPointer                                                             readDoneHandler;
 
     /*  Pointer to a data structure which contains the writeTo (receive) buffer.
-        Upon reception, the pointer can be used for swapping buffers instead of copying them.
     */
-    Block* writeBlock;
+    SharedPointer<Block> writeBlock;
 
     /*  BLE characteristics the block transfer is built upon.
     */
@@ -177,7 +191,7 @@ private:
     /*  Data structure pointing to the read characteristic value.
         This data structure can be updated everytime a read request is received.
     */
-    Block* readBlock;
+    SharedPointer<Block> readBlock;
 
     /*  Internal variables for keeping track of how many fragments have been read in a batch.
     */

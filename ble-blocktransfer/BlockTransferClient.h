@@ -24,11 +24,16 @@
 
 #include "ble-blocktransfer/BlockTransfer.h"
 #include "ble-blocktransfer/IndexSet.h"
+#include "ble-blocktransfer/FunctionPointerWithContext.h"
+#include "ble-blocktransfer/SharedPointer.h"
 
 #include "mbed-block/Block.h"
+#include "mbed-block/BlockDynamic.h"
 #include "mbed-block/BlockStatic.h"
 #include "mbed-block/BlockStaticReadOnly.h"
 #include "mbed-block/BlockCollection.h"
+
+using namespace mbed::util;
 
 class BlockTransferClient;
 
@@ -67,9 +72,9 @@ public:
     void init(T* object,
               void (T::*member)(void),
               const UUID& uuid,
-              Gap::Handle_t _peripheral)
+              Gap::Handle_t _connectionHandle)
     {
-        peripheral = _peripheral;
+        connectionHandle = _connectionHandle;
 
         writeDoneHandler.attach(object, member);
 
@@ -77,7 +82,7 @@ public:
 
         ble.gattServer().onDataSent(this, &BlockTransferClient::internalDataSent);
 
-        ble.gattClient().launchServiceDiscovery(peripheral,
+        ble.gattClient().launchServiceDiscovery(connectionHandle,
                                                 NULL,
                                                 bridgeCharacteristicDiscoveryCallback,
                                                 uuid);
@@ -94,47 +99,47 @@ public:
 
     /*  Read
     */
-    ble_error_t read(Block* buffer, void (*readDone)(Block*))
+    ble_error_t read(uint32_t length, uint32_t offset, void (*readDone)(SharedPointer<Block>))
     {
         readDoneHandler.attach(readDone);
 
-        return internalRead(buffer);
+        return internalRead(length, offset);
     }
 
     template <typename T>
-    ble_error_t read(Block* buffer, T* object, void (T::*member)(Block*))
+    ble_error_t read(uint32_t length, uint32_t offset, T* object, void (T::*member)(SharedPointer<Block>))
     {
         readDoneHandler.attach(object, member);
 
-        return internalRead(buffer);
+        return internalRead(length, offset);
     }
 
     /*  Write
     */
-    ble_error_t write(Block* buffer, void (*writeDone)(void))
+    ble_error_t write(SharedPointer<Block>& block, void (*writeDone)(SharedPointer<Block>))
     {
         writeDoneHandler.attach(writeDone);
 
-        return internalWrite(buffer);
+        return internalWrite(block);
     }
 
     template <typename T>
-    ble_error_t write(Block* buffer, T* object, void (T::*member)(void))
+    ble_error_t write(SharedPointer<Block>& block, T* object, void (T::*member)(SharedPointer<Block>))
     {
         writeDoneHandler.attach(object, member);
 
-        return internalWrite(buffer);
+        return internalWrite(block);
     }
 
     /*  Notications
     */
-    void onNotification(void (*_notificationHandler)(void))
+    void onNotification(void (*_notificationHandler)(SharedPointer<Block>))
     {
         notificationHandler.attach(_notificationHandler);
     }
 
     template <typename T>
-    void onNotification(T* object, void (T::*member)(void))
+    void onNotification(T* object, void (T::*member)(SharedPointer<Block>))
     {
         notificationHandler.attach(object, member);
     }
@@ -152,8 +157,8 @@ public:
 
 private:
     /* Internal functions for handling read and write requests. */
-    ble_error_t internalRead(Block* buffer);
-    ble_error_t internalWrite(Block* buffer);
+    ble_error_t internalRead(uint32_t length, uint32_t offset);
+    ble_error_t internalWrite(SharedPointer<Block>& block);
 
     /*  This function is called when the BLE device is ready to send more messages
         and is shared by all characteristics.
@@ -179,18 +184,18 @@ private:
 
 private:
     BLE ble;
-    Gap::Handle_t peripheral;
+    Gap::Handle_t connectionHandle;
 
-    FunctionPointerWithContext<Block*> readDoneHandler;
-    FunctionPointer writeDoneHandler;
-    FunctionPointer notificationHandler;
+    FunctionPointerWithContext<SharedPointer<Block> > readDoneHandler;
+    FunctionPointerWithContext<SharedPointer<Block> > writeDoneHandler;
+    FunctionPointerWithContext<SharedPointer<Block> > notificationHandler;
+    FunctionPointer readyHandler;
 
     DiscoveredCharacteristic readCharacteristic;
     DiscoveredCharacteristic writeCharacteristic;
 
-    Block* writeBlock;
-    Block* readBlock;
-
+    SharedPointer<Block> writeBlock;
+    SharedPointer<Block> readBlock;
 
     /*  Internal variables for keeping track of outgoing fragments in a batch.
     */

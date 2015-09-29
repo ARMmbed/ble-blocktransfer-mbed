@@ -70,11 +70,11 @@ BlockTransferClient::BlockTransferClient()
 
 void BlockTransferClient::init(void (*clientReady)(void),
           const UUID& uuid,
-          Gap::Handle_t _peripheral)
+          Gap::Handle_t _connectionHandle)
 {
-    peripheral = _peripheral;
+    connectionHandle = _connectionHandle;
 
-    writeDoneHandler.attach(clientReady);
+    readyHandler.attach(clientReady);
 
     ble.init();
 
@@ -82,7 +82,7 @@ void BlockTransferClient::init(void (*clientReady)(void),
     // this should be onDataWritten in gattClient, but interface does not support memberfunctions
     ble.gattServer().onDataSent(this, &BlockTransferClient::internalDataSent);
 
-    ble.gattClient().launchServiceDiscovery(peripheral,
+    ble.gattClient().launchServiceDiscovery(connectionHandle,
                                             NULL,
                                             bridgeCharacteristicDiscoveryCallback,
                                             uuid);
@@ -96,31 +96,43 @@ void BlockTransferClient::init(void (*clientReady)(void),
     btcBridge = this;
 }
 
-ble_error_t BlockTransferClient::internalRead(Block* block)
+ble_error_t BlockTransferClient::internalRead(uint32_t length, uint32_t offset)
 {
+    ble_error_t result = BLE_STACK_BUSY;
+
     if (internalState == BT_STATE_READY)
     {
-        readBlock = block;
+        uint8_t* buffer = (uint8_t*) malloc(length);
 
-        BLE_DEBUG("btc: read: %d\r\n", readBlock->getLength());
+        // only continue if allocation was successful
+        if (buffer)
+        {
+            // allocate reference counted dynamic memory buffer
+            readBlock = SharedPointer<Block>(new BlockDynamic(buffer, length));
+            readBlock->setOffset(offset);
 
-        /*  Do a normal characteristic read at given offset.
-            The server will either respond with a single direct message with the data
-            or a setup message for fragment requests.
-        */
-        internalState = BT_STATE_CLIENT_READ_SETUP;
+            BLE_DEBUG("btc: read: %d\r\n", readBlock->getLength());
 
-        readCharacteristic.read(readBlock->getOffset());
+            /*  Do a normal characteristic read at given offset.
+                The server will either respond with a single direct message with the data
+                or a setup message for fragment requests.
+            */
+            internalState = BT_STATE_CLIENT_READ_SETUP;
 
-        return BLE_ERROR_NONE;
+            readCharacteristic.read(readBlock->getOffset());
+
+            result = BLE_ERROR_NONE;
+        }
+        else
+        {
+            result = BLE_ERROR_NO_MEM;
+        }
     }
-    else
-    {
-        return BLE_STACK_BUSY;
-    }
+
+    return result;
 }
 
-ble_error_t BlockTransferClient::internalWrite(Block* block)
+ble_error_t BlockTransferClient::internalWrite(SharedPointer<Block>& block)
 {
     BLE_DEBUG("btc: write\r\n");
 
@@ -319,6 +331,9 @@ void BlockTransferClient::internalSendReadAcknowledgement()
 
         // signal upper layer of write request
         readDoneHandler.call(readBlock);
+
+        // try to free memory
+        readBlock = SharedPointer<Block>();
     }
     else
     {
@@ -371,13 +386,13 @@ void BlockTransferClient::characteristicDiscoveryCallback(const DiscoveredCharac
          * DiscoveredCharacteristic::discoverDescriptors() followed by DiscoveredDescriptor::write(...). */
         uint16_t value = BLE_HVX_NOTIFICATION;
         ble.gattClient().write(GattClient::GATT_OP_WRITE_REQ,
-                               peripheral,
+                               connectionHandle,
                                readCharacteristic.getValueHandle() + 1, /* HACK Alert. We're assuming that CCCD descriptor immediately follows the value attribute. */
                                sizeof(uint16_t),                          /* HACK Alert! size should be made into a BLE_API constant. */
                                reinterpret_cast<const uint8_t *>(&value));
 
         internalState = BT_STATE_READY;
-        writeDoneHandler.call();
+        readyHandler.call();
     }
 }
 
@@ -385,7 +400,7 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
 {
     BLE_DEBUG("btc: read callback\r\n");
 
-    if (params->handle == readCharacteristic.getValueHandle())
+    if ((params->connHandle == connectionHandle) && (params->handle == readCharacteristic.getValueHandle()))
     {
 #if 0
         for (std::size_t idx = 0; idx < params->len; idx++)
@@ -407,28 +422,27 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
                     */
                     internalState = BT_STATE_OFF;
 
-                    /*  Guard against read block being NULL. */
-                    if (readBlock)
+                    // payload length
+                    uint16_t currentPayloadLength = params->len - DIRECT_READ_HEADER_SIZE;
+
+                    // consider the length to avoid buffer overrun
+                    if (currentPayloadLength > readBlock->getMaxLength())
                     {
-                        // payload length
-                        uint16_t currentPayloadLength = params->len - DIRECT_READ_HEADER_SIZE;
-
-                        // consider the length to avoid buffer overrun
-                        if (currentPayloadLength > readBlock->getMaxLength())
-                        {
-                            currentPayloadLength = readBlock->getMaxLength();
-                        }
-
-                        readBlock->setLength(currentPayloadLength);
-
-                        // copy payload
-                        readBlock->memcpy(0, &(params->data[DIRECT_READ_HEADER_SIZE]), currentPayloadLength);
-
-                        /*  Signal upper layer of read request.
-                        */
-                        // note: the read done handler is a FunctionPointerWithContext and does NULL pointer checks internally
-                        readDoneHandler.call(readBlock);
+                        currentPayloadLength = readBlock->getMaxLength();
                     }
+
+                    readBlock->setLength(currentPayloadLength);
+
+                    // copy payload
+                    readBlock->memcpy(0, &(params->data[DIRECT_READ_HEADER_SIZE]), currentPayloadLength);
+
+                    /*  Signal upper layer of read request.
+                    */
+                    // note: the read done handler is a FunctionPointerWithContext and does NULL pointer checks internally
+                    readDoneHandler.call(readBlock);
+
+                    // try to free memory
+                    readBlock = SharedPointer<Block>();
                 }
                 break;
 
@@ -440,13 +454,9 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
                         /*  Read setup message received.
                         */
 
-                        /*  Guard against read block being NULL. */
                         uint32_t maxLength = 0;
 
-                        if (readBlock)
-                        {
-                            maxLength = readBlock->getMaxLength();
-                        }
+                        maxLength = readBlock->getMaxLength();
 
                         BLE_DEBUG("btc: read maxLength: %d\r\n", maxLength);
 
@@ -508,7 +518,8 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
 
 void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
 {
-    if (params->handle == readCharacteristic.getValueHandle())
+    // check that the message belongs to this connection and characteristic
+    if ((params->connHandle == connectionHandle) && (params->handle == readCharacteristic.getValueHandle()))
     {
         BLE_DEBUG("btc: hvx from read characteristic\r\n");
 
@@ -548,10 +559,19 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
                     }
                     else
                     {
+                        // set ready state so BlockTransferClient can be called from
                         internalState = BT_STATE_READY;
-                        if (writeDoneHandler)
+
+                        // Pass tempBlock to callback and clear writeBlock.
+                        // This allows the writeBlock to be freed safely
+                        // regardless of whether the callback overwrites it with
+                        // call to BlockTransferClient::write()
+                        SharedPointer<Block> tempBlock = writeBlock;
+                        writeBlock = SharedPointer<Block>();
+
+//                        if (writeDoneHandler)
                         {
-                            writeDoneHandler.call();
+                            writeDoneHandler.call(tempBlock);
                         }
                         BLE_DEBUG("btc: write complete\r\n");
                     }
@@ -561,9 +581,23 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
             case BT_TYPE_READ_NOTIFY:
                 {
                     BLE_DEBUG("btc: read notify\r\n");
-                    if (notificationHandler)
+
+//                    if (notificationHandler)
                     {
-                        notificationHandler.call();
+                        uint32_t bufferLength = params->len - DIRECT_READ_HEADER_SIZE;
+                        uint8_t* buffer = (uint8_t*) malloc(bufferLength);
+
+                        // only continue if allocation was successful
+                        if (buffer)
+                        {
+                            // allocate reference counted dynamic memory buffer
+                            SharedPointer<Block> block(new BlockDynamic(buffer, bufferLength));
+
+                            // copy notification to buffer
+                            block->memcpy(0, &(message[DIRECT_READ_HEADER_SIZE]), bufferLength);
+
+                            notificationHandler.call(block);
+                        }
                     }
                 }
                 break;
@@ -651,35 +685,51 @@ void BlockTransferClient::internalDataSent(unsigned)
     switch(internalState)
     {
         case BT_STATE_CLIENT_WRITE_DIRECT:
-            // direct write payload complete
-            BLE_DEBUG("btc: direct payload sent\n\r");
-
-            internalState = BT_STATE_READY;
-            if (writeDoneHandler)
             {
-                writeDoneHandler.call();
+                // direct write payload complete
+                BLE_DEBUG("btc: direct payload sent\n\r");
+
+                internalState = BT_STATE_READY;
+
+                // Pass tempBlock to callback and clear writeBlock.
+                // This allows the writeBlock to be freed safely
+                // regardless of whether the callback overwrites it with
+                // call to BlockTransferClient::write()
+                SharedPointer<Block> tempBlock = writeBlock;
+                writeBlock = SharedPointer<Block>();
+
+//                if (writeDoneHandler)
+                {
+                    writeDoneHandler.call(tempBlock);
+                }
             }
             break;
 
         case BT_STATE_CLIENT_WRITE_SETUP:
-            // bulk write setup complete
-            BLE_DEBUG("btc: write setup sent\n\r");
+            {
+                // bulk write setup complete
+                BLE_DEBUG("btc: write setup sent\n\r");
 
-            // wait for write requests
-            internalState = BT_STATE_CLIENT_WRITE_PAYLOAD;
+                // wait for write requests
+                internalState = BT_STATE_CLIENT_WRITE_PAYLOAD;
+            }
             break;
 
         case BT_STATE_CLIENT_WRITE_PAYLOAD:
-            // bulk write payload complete
-            BLE_DEBUG("btc: payload sent\n\r");
+            {
+                // bulk write payload complete
+                BLE_DEBUG("btc: payload sent\n\r");
 
-            // process next payload in write sequence
-            internalSendWriteReply();
+                // process next payload in write sequence
+                internalSendWriteReply();
+            }
             break;
 
         case BT_STATE_CLIENT_READ_ACK:
-            // bulk read transfer complete, send ack
-            internalSendReadAcknowledgement();
+            {
+                // bulk read transfer complete, send ack
+                internalSendReadAcknowledgement();
+            }
             break;
 
         case BT_STATE_READY:
@@ -694,8 +744,10 @@ void BlockTransferClient::internalOnDisconnection(const Gap::DisconnectionCallba
 {
     BLE_DEBUG("btc: disconnected\r\n");
 
-    (void) params;
-    internalState = BT_STATE_OFF;
+    if (params->handle == connectionHandle)
+    {
+        internalState = BT_STATE_OFF;
+    }
 }
 
 void BlockTransferClient::internalOnConnection(const Gap::ConnectionCallbackParams_t* params)
