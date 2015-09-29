@@ -597,6 +597,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
 void BlockTransferService::onConnection(const Gap::ConnectionCallbackParams_t* params)
 {
     BLE_DEBUG("bts: connected\r\n");
+    (void) params;
 
     // increment connection counter
     connectionCounter++;
@@ -752,6 +753,7 @@ void BlockTransferService::sendWriteRequestMissing(void)
         request[6] = count >> 16;
 
         ble_error_t didSendValue = ble.gattServer().write(connectionHandle, readFromHandle, request, 7);
+        (void) didSendValue;
 
         // set timeout for missing fragments
         timeout.attach_us(this, &BlockTransferService::fragmentTimeout, FRAGMENT_TIMEOUT_US);
