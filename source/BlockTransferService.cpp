@@ -222,6 +222,14 @@ void BlockTransferService::onReadRequest(GattReadAuthCallbackParams* event)
                     event->authorizationReply = AUTH_CALLBACK_REPLY_SUCCESS;
                     event->data = directBlock;
                     event->len = readBlock->getLength() + 1;
+
+                    // signal read done
+                    if (readDoneHandler)
+                    {
+                        readDoneHandler.call();
+                    }
+
+                    BLE_DEBUG("bts: read complete\r\n");
                 }
                 else
                 {
