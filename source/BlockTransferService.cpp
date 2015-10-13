@@ -40,11 +40,11 @@ BlockTransferService::BlockTransferService()
         readDoneHandler(),
         writeBlock(),
         readFromCharacteristic(ServiceReadCharacteristicShortUUID,
-                               sendBuffer, 1, BTS_MTU_SIZE_DEFAULT,
+                               NULL, 0, BTS_MTU_SIZE_DEFAULT,
                                GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ |
                                GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY),
         writeToCharacteristic(ServiceWriteCharacteristicShortUUID,
-                              receiveBuffer, 1, BTS_MTU_SIZE_DEFAULT,
+                              NULL, 0, BTS_MTU_SIZE_DEFAULT,
                               GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_WRITE_WITHOUT_RESPONSE),
         readBlock(NULL),
         receiveLengthOffset(0),

@@ -179,9 +179,6 @@ private:
 
     /*  BLE characteristics the block transfer is built upon.
     */
-    uint8_t receiveBuffer[BTS_MTU_SIZE_DEFAULT];
-    uint8_t sendBuffer[BTS_MTU_SIZE_DEFAULT];
-
     GattCharacteristic readFromCharacteristic;
     GattCharacteristic writeToCharacteristic;
 
