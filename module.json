@@ -16,7 +16,7 @@
     }
   ],
   "dependencies": {
-    "ble": "~0.4.8",
-    "mbed-block": "~0.2.4"
+    "ble": "^1.0.0",
+    "mbed-block": "~0.3.0"
   }
 }
