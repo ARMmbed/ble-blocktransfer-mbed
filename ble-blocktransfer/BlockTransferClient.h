@@ -65,37 +65,24 @@ public:
     * @param        securityMode    Security mode required.
     */
     void init(void (*clientReady)(void),
-              const UUID& uuid,
+              UUID uuid,
               Gap::Handle_t);
 
     template <typename T>
     void init(T* object,
               void (T::*member)(void),
-              const UUID& uuid,
+              UUID _uuid,
               Gap::Handle_t _connectionHandle)
     {
+        btcBridge = this;
+
+        uuid = _uuid;
         connectionHandle = _connectionHandle;
 
         writeDoneHandler.attach(object, member);
 
-        ble.init();
-
-        ble.gattServer().onDataSent(this, &BlockTransferClient::internalDataSent);
-
-        ble.gattClient().launchServiceDiscovery(connectionHandle,
-                                                NULL,
-                                                bridgeCharacteristicDiscoveryCallback,
-                                                uuid);
-
-        ble.gattClient().onHVX(bridgeHVXCallback);
-        ble.gattClient().onDataRead(bridgeReadCallback);
-
-        ble.gap().onConnection(this, &BlockTransferClient::internalOnConnection);
-        ble.gap().onDisconnection(this, &BlockTransferClient::internalOnDisconnection);
-
-        btcBridge = this;
+        ble.init(this, &BlockTransferClient::initDone);
     }
-
 
     /*  Read
     */
@@ -156,6 +143,9 @@ public:
     void readCallback(const GattReadCallbackParams* params);
 
 private:
+    /* Initialization */
+    void initDone(BLE::InitializationCompleteCallbackContext* context);
+
     /* Internal functions for handling read and write requests. */
     ble_error_t internalRead(uint32_t length, uint32_t offset);
     ble_error_t internalWrite(SharedPointer<Block>& block);
@@ -184,6 +174,7 @@ private:
 
 private:
     BLE ble;
+    UUID uuid;
     Gap::Handle_t connectionHandle;
 
     FunctionPointerWithContext<SharedPointer<Block> > readDoneHandler;

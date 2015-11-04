@@ -54,7 +54,7 @@ public:
     * @param        &uuid           Service UUID for the Block Transfer Service.
     * @param        securityMode    Security mode required.
     */
-    void init(const UUID &uuid,
+    void init(UUID uuid,
               SecurityManager::SecurityMode_t securityMode
               = SecurityManager::SECURITY_MODE_ENCRYPTION_OPEN_LINK);
 
@@ -128,6 +128,9 @@ public:
     bool isReady(void);
 
 private:
+    /* Initialization */
+    void initDone(BLE::InitializationCompleteCallbackContext* context);
+
     /* Internal callback functions for handling read and write requests. */
     void onReadRequest(GattReadAuthCallbackParams* params);
     void onWriteRequest(GattWriteAuthCallbackParams* params);
@@ -161,6 +164,8 @@ private:
 
 private:
     BLE ble;
+    UUID uuid;
+    SecurityManager::SecurityMode_t securityMode;
 
     /*  Connection handle for transfer in progress.
     */
@@ -186,7 +191,7 @@ private:
     GattAttribute::Handle_t writeToHandle;
 
     /*  Data structure pointing to the read characteristic value.
-        This data structure can be updated everytime a read request is received.
+        This data structure is updated everytime a read request is received.
     */
     SharedPointer<Block> readBlock;
 

@@ -69,15 +69,19 @@ BlockTransferClient::BlockTransferClient()
 {}
 
 void BlockTransferClient::init(void (*clientReady)(void),
-          const UUID& uuid,
-          Gap::Handle_t _connectionHandle)
+                               UUID _uuid,
+                               Gap::Handle_t _connectionHandle)
 {
+    uuid = _uuid;
     connectionHandle = _connectionHandle;
 
     readyHandler.attach(clientReady);
 
-    ble.init();
+    ble.init(this, &BlockTransferClient::initDone);
+}
 
+void BlockTransferClient::initDone(BLE::InitializationCompleteCallbackContext* context)
+{
     // register callback functions
     // this should be onDataWritten in gattClient, but interface does not support memberfunctions
     ble.gattServer().onDataSent(this, &BlockTransferClient::internalDataSent);
@@ -92,8 +96,6 @@ void BlockTransferClient::init(void (*clientReady)(void),
 
     ble.gap().onConnection(this, &BlockTransferClient::internalOnConnection);
     ble.gap().onDisconnection(this, &BlockTransferClient::internalOnDisconnection);
-
-    btcBridge = this;
 }
 
 ble_error_t BlockTransferClient::internalRead(uint32_t length, uint32_t offset)

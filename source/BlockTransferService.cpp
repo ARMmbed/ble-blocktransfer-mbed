@@ -57,11 +57,17 @@ BlockTransferService::BlockTransferService()
         writeState(BT_STATE_OFF)
 {}
 
-void BlockTransferService::init(const UUID& uuid,
-                                SecurityManager::SecurityMode_t securityMode)
+void BlockTransferService::init(UUID _uuid,
+                                SecurityManager::SecurityMode_t _securityMode)
 {
-    ble.init();
+    uuid = _uuid;
+    securityMode = _securityMode;
 
+    ble.init(this, &BlockTransferService::initDone);
+}
+
+void BlockTransferService::initDone(BLE::InitializationCompleteCallbackContext* context)
+{
     /*  Enable security.
     */
     ble.securityManager().init();
@@ -228,6 +234,9 @@ void BlockTransferService::onReadRequest(GattReadAuthCallbackParams* event)
                     {
                         readDoneHandler.call();
                     }
+
+                    // clear reference to block
+                    readBlock = SharedPointer<Block>();
 
                     BLE_DEBUG("bts: read complete\r\n");
                 }
@@ -582,6 +591,9 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                             {
                                 readDoneHandler.call();
                             }
+
+                            // clear reference to block
+                            readBlock = SharedPointer<Block>();
 
                             BLE_DEBUG("bts: read complete\r\n");
                         }
