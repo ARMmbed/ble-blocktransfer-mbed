@@ -58,8 +58,6 @@ public:
       * @param _pointer Pointer to take control over
       */
     SharedPointer(T* _pointer): pointer(_pointer) {
-        MBED_ASSERT(pointer);
-
         // allocate counter on the heap so it can be shared
         counter = (uint32_t*) malloc(sizeof(uint32_t));
 
