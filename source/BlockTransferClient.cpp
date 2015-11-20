@@ -18,8 +18,8 @@
 
 #if 0
 // increase timeout
-#undef FRAGMENT_TIMEOUT_US
-#define FRAGMENT_TIMEOUT_US (1000*1000)
+#undef FRAGMENT_TIMEOUT_MS
+#define FRAGMENT_TIMEOUT_MS (1000)
 #define BLE_DEBUG(...) { printf(__VA_ARGS__); }
 #else
 #define BLE_DEBUG(...) /* nothing */
@@ -61,7 +61,7 @@ void bridgeHVXCallback(const GattHVXCallbackParams* params)
 
 
 BlockTransferClient::BlockTransferClient()
-    :   ble(),
+    :   timeoutHandle(NULL),
         currentMTU(BTS_MTU_SIZE_DEFAULT),
         maxBlockPayloadSize(BTS_MTU_SIZE_DEFAULT - BLOCK_HEADER_SIZE),
         maxDirectReadPayloadSize(BTS_MTU_SIZE_DEFAULT - DIRECT_READ_HEADER_SIZE),
@@ -72,16 +72,22 @@ void BlockTransferClient::init(void (*clientReady)(void),
                                UUID _uuid,
                                Gap::Handle_t _connectionHandle)
 {
+    btcBridge = this;
+
     uuid = _uuid;
     connectionHandle = _connectionHandle;
 
     readyHandler.attach(clientReady);
 
-    ble.init(this, &BlockTransferClient::initDone);
+    BLE::Instance().init(this, &BlockTransferClient::initDone);
 }
 
 void BlockTransferClient::initDone(BLE::InitializationCompleteCallbackContext* context)
 {
+    (void) context;
+
+    BLE& ble = BLE::Instance();
+
     // register callback functions
     // this should be onDataWritten in gattClient, but interface does not support memberfunctions
     ble.gattServer().onDataSent(this, &BlockTransferClient::internalDataSent);
@@ -113,7 +119,7 @@ ble_error_t BlockTransferClient::internalRead(uint32_t length, uint32_t offset)
             readBlock = SharedPointer<Block>(new BlockDynamic(buffer, length));
             readBlock->setOffset(offset);
 
-            BLE_DEBUG("btc: read: %d\r\n", readBlock->getLength());
+            BLE_DEBUG("btc: read: %lu\r\n", readBlock->getLength());
 
             /*  Do a normal characteristic read at given offset.
                 The server will either respond with a single direct message with the data
@@ -138,35 +144,35 @@ ble_error_t BlockTransferClient::internalWrite(SharedPointer<Block>& block)
 {
     BLE_DEBUG("btc: write\r\n");
 
+    ble_error_t result = BLE_STACK_BUSY;
+
     if (internalState == BT_STATE_READY)
     {
-        writeBlock = block;
-
         /*  If the block is small enough to fit a single message, use direct shortcut
             and bypass the setup process.
         */
-        if (writeBlock->getLength() <= MAX_DIRECT_WRITE_PAYLOAD_SIZE)
+        if (block->getLength() <= MAX_DIRECT_WRITE_PAYLOAD_SIZE)
         {
-            uint8_t length = 3 + writeBlock->getLength();
+            uint8_t length = 3 + block->getLength();
             uint8_t writeBuffer[length];
 
             writeBuffer[0] = BT_TYPE_WRITE_DIRECT << 4;
-            writeBuffer[1] = writeBlock->getOffset();
-            writeBuffer[2] = writeBlock->getOffset() >> 8;
+            writeBuffer[1] = block->getOffset();
+            writeBuffer[2] = block->getOffset() >> 8;
 
-            writeBlock->memcpy(&(writeBuffer[3]), 0, writeBlock->getLength());
+            block->memcpy(&(writeBuffer[3]), 0, block->getLength());
 
             internalState = BT_STATE_CLIENT_WRITE_DIRECT;
 
-            writeCharacteristic.writeWoResponse(length, writeBuffer);
+            result = writeCharacteristic.writeWoResponse(length, writeBuffer);
         }
         else
         {
             //  Find the total number of fragments needed to transmit the block
             //  based on the MTU size minus payload header.
-            outgoingTotalFragments = (writeBlock->getLength() + (maxBlockPayloadSize - 1)) / maxBlockPayloadSize;
+            outgoingTotalFragments = (block->getLength() + (maxBlockPayloadSize - 1)) / maxBlockPayloadSize;
 
-            BLE_DEBUG("btc: write setup: %d %d %d\r\n", writeBlock->getLength(), outgoingTotalFragments, maxBlockPayloadSize);
+            BLE_DEBUG("btc: write setup: %lu %lu %d\r\n", block->getLength(), outgoingTotalFragments, maxBlockPayloadSize);
 
             /*  Send setup message.
                 When the receiver is ready for data it will send a request for fragments.
@@ -176,28 +182,30 @@ ble_error_t BlockTransferClient::internalWrite(SharedPointer<Block>& block)
 
             writeBuffer[0] = BT_TYPE_WRITE_SETUP << 4;
 
-            writeBuffer[1] = writeBlock->getLength();
-            writeBuffer[2] = writeBlock->getLength() >> 8;
-            writeBuffer[3] = writeBlock->getLength() >> 16;
+            writeBuffer[1] = block->getLength();
+            writeBuffer[2] = block->getLength() >> 8;
+            writeBuffer[3] = block->getLength() >> 16;
 
-            writeBuffer[4] = writeBlock->getOffset();
-            writeBuffer[5] = writeBlock->getOffset() >> 8;
-            writeBuffer[6] = writeBlock->getOffset() >> 16;
+            writeBuffer[4] = block->getOffset();
+            writeBuffer[5] = block->getOffset() >> 8;
+            writeBuffer[6] = block->getOffset() >> 16;
 
             writeBuffer[7] = outgoingTotalFragments;
             writeBuffer[8] = outgoingTotalFragments >> 8;
             writeBuffer[9] = outgoingTotalFragments >> 16;
 
             internalState = BT_STATE_CLIENT_WRITE_SETUP;
-            writeCharacteristic.writeWoResponse(length, writeBuffer);
-        }
 
-        return BLE_ERROR_NONE;
+            result = writeCharacteristic.writeWoResponse(length, writeBuffer);
+
+            if (result == BLE_ERROR_NONE)
+            {
+                writeBlock = block;
+            }
+        }
     }
-    else
-    {
-        return BLE_STACK_BUSY;
-    }
+
+    return result;
 }
 
 bool BlockTransferClient::writeInProgess(void)
@@ -232,7 +240,7 @@ void BlockTransferClient::internalSendWriteReply(void)
         // send current fragment
         bool result = internalSendWriteReplyRepeatedly();
 
-        BLE_DEBUG("\t: write without response: %d %d\r\n", outgoingFragmentIndex, result);
+        BLE_DEBUG("\t: write without response: %lu %d\r\n", outgoingFragmentIndex, result);
 
         // update to next fragment if successful
         if (result)
@@ -302,10 +310,14 @@ void BlockTransferClient::internalSendReadRequest()
 
         writeCharacteristic.writeWoResponse(7, writeBuffer);
 
+#if defined(YOTTA_MINAR_VERSION_STRING)
         // set timeout for missing fragments
-        timeout.attach_us(this, &BlockTransferClient::fragmentTimeout, FRAGMENT_TIMEOUT_US);
+        timeoutHandle = minar::Scheduler::postCallback(this, &BlockTransferClient::fragmentTimeout)
+                        .delay(minar::milliseconds(FRAGMENT_TIMEOUT_MS))
+                        .getHandle();
+#endif
 
-        BLE_DEBUG("btc: read request: %d %d\r\n", fragmentIndex, count);
+        BLE_DEBUG("btc: read request: %lu %lu\r\n", fragmentIndex, count);
     }
 }
 
@@ -350,6 +362,8 @@ void BlockTransferClient::fragmentTimeout(void)
 {
     BLE_DEBUG("btc: timeout\r\n");
 
+    timeoutHandle = NULL;
+
     // request missing fragments
     internalSendReadRequest();
 }
@@ -387,11 +401,11 @@ void BlockTransferClient::characteristicDiscoveryCallback(const DiscoveredCharac
          * It isn't clear whether we should provide a DiscoveredCharacteristic::enableNoticiation() or
          * DiscoveredCharacteristic::discoverDescriptors() followed by DiscoveredDescriptor::write(...). */
         uint16_t value = BLE_HVX_NOTIFICATION;
-        ble.gattClient().write(GattClient::GATT_OP_WRITE_REQ,
-                               connectionHandle,
-                               readCharacteristic.getValueHandle() + 1, /* HACK Alert. We're assuming that CCCD descriptor immediately follows the value attribute. */
-                               sizeof(uint16_t),                          /* HACK Alert! size should be made into a BLE_API constant. */
-                               reinterpret_cast<const uint8_t *>(&value));
+        BLE::Instance().gattClient().write(GattClient::GATT_OP_WRITE_REQ,
+                                           connectionHandle,
+                                           readCharacteristic.getValueHandle() + 1, /* HACK Alert. We're assuming that CCCD descriptor immediately follows the value attribute. */
+                                           sizeof(uint16_t),                          /* HACK Alert! size should be made into a BLE_API constant. */
+                                           reinterpret_cast<const uint8_t *>(&value));
 
         internalState = BT_STATE_READY;
         readyHandler.call();
@@ -460,7 +474,7 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
 
                         maxLength = readBlock->getMaxLength();
 
-                        BLE_DEBUG("btc: read maxLength: %d\r\n", maxLength);
+                        BLE_DEBUG("btc: read maxLength: %lu\r\n", maxLength);
 
                         if (maxLength < maxBlockPayloadSize)
                         {
@@ -500,7 +514,7 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
                             // set index set size when readblock is first called
                             missingFragments.setSize(incomingTotalFragments);
 
-                            BLE_DEBUG("btc: read setup: %d %d %d\n\r", incomingTotalLength, incomingTotalFragments, maxBlockPayloadSize);
+                            BLE_DEBUG("btc: read setup: %lu %lu %d\n\r", incomingTotalLength, incomingTotalFragments, maxBlockPayloadSize);
                         }
 
                         /*  Acknowledge setup by requesting data.
@@ -554,7 +568,7 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
                         outgoingFragmentIndex = sendFromFragment;
                         outgoingFragmentsInBatch = sendAmount;
 
-                        BLE_DEBUG("btc: write request %d %d %d\r\n", outgoingFragmentIndex, outgoingFragmentsInBatch, outgoingTotalFragments);
+                        BLE_DEBUG("btc: write request %lu %lu %lu\r\n", outgoingFragmentIndex, outgoingFragmentsInBatch, outgoingTotalFragments);
 
                         // send requested fragments
                         internalSendWriteReply();
@@ -609,12 +623,16 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
                 {
                     if (internalState == BT_STATE_CLIENT_READ_REQUEST)
                     {
+#if defined(YOTTA_MINAR_VERSION_STRING)
                         // reset timeout for missing fragments
-                        timeout.attach_us(this, &BlockTransferClient::fragmentTimeout, FRAGMENT_TIMEOUT_US);
+                        minar::Scheduler::cancelCallback(timeoutHandle);
+                        timeoutHandle = minar::Scheduler::postCallback(this, &BlockTransferClient::fragmentTimeout)
+                                        .delay(minar::milliseconds(FRAGMENT_TIMEOUT_MS))
+                                        .getHandle();
+#endif
 
                         /*  Read fragment received and it was expected
                         */
-
                         uint32_t fragmentIndex;
                         fragmentIndex = message[2];
                         fragmentIndex = (fragmentIndex << 8) | message[1];
@@ -632,7 +650,7 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
 
                             readBlock->memcpy(processedLength, &(params->data[BLOCK_HEADER_SIZE]), currentPayloadLength);
 
-                            BLE_DEBUG("\t: fragment : %5d : ", fragmentIndex);
+                            BLE_DEBUG("\t: fragment : %5lu : ", fragmentIndex);
 #if 0
                             for (std::size_t idx = 0; idx < currentPayloadLength; idx++)
                             {
@@ -640,15 +658,18 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
                             }
                             BLE_DEBUG(" : ");
 #endif
-                            BLE_DEBUG("%4d\r\n", processedLength);
+                            BLE_DEBUG("%4lu\r\n", processedLength);
 
                             /*  When sender signals "no more data", request missing fragments
                                 or signal reception complete.
                             */
                             if (messageType == BT_TYPE_READ_PAYLOAD_LAST)
                             {
+#if defined(YOTTA_MINAR_VERSION_STRING)
                                 // last fragment received, cancel timeout
-                                timeout.detach();
+                                minar::Scheduler::cancelCallback(timeoutHandle);
+                                timeoutHandle = NULL;
+#endif
 
                                 if (missingFragments.getCount() == 0)
                                 {
@@ -667,7 +688,7 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
                         }
                         else
                         {
-                            BLE_DEBUG("btc: read duplicate %d\r\n", fragmentIndex);
+                            BLE_DEBUG("btc: read duplicate %lu\r\n", fragmentIndex);
                         }
                     }
                 }
@@ -682,8 +703,6 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
 
 void BlockTransferClient::internalDataSent(unsigned)
 {
-    BLE_DEBUG("btc: data sent\r\n");
-
     switch(internalState)
     {
         case BT_STATE_CLIENT_WRITE_DIRECT:
@@ -749,6 +768,12 @@ void BlockTransferClient::internalOnDisconnection(const Gap::DisconnectionCallba
     if (params->handle == connectionHandle)
     {
         internalState = BT_STATE_OFF;
+
+#if defined(YOTTA_MINAR_VERSION_STRING)
+        // cancel any outstanding timeouts
+        minar::Scheduler::cancelCallback(timeoutHandle);
+        timeoutHandle = NULL;
+#endif
     }
 }
 

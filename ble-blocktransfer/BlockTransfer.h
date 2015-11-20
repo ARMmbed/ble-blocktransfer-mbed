@@ -5,7 +5,7 @@
 #define MAX_BLOCK_TRANSFER_SIZE         (1024)
 
 /* maximum interval between fragments before recovery. */
-#define FRAGMENT_TIMEOUT_US             (100 * 1000)
+#define FRAGMENT_TIMEOUT_MS             (100)
 
 /* message types */
 typedef enum

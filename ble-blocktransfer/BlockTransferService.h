@@ -17,7 +17,7 @@
 #ifndef __BLOCKTRANSFERSERVICE_H__
 #define __BLOCKTRANSFERSERVICE_H__
 
-#include "mbed.h"
+#include "mbed-drivers/mbed.h"
 #include "ble/BLE.h"
 
 #include "ble-blocktransfer/BlockTransfer.h"
@@ -212,7 +212,10 @@ private:
         Note: if the BLE stack is working properly, fragments should never be missing.
     */
     IndexSet<MAX_INDEX_SET_SIZE> missingFragments;
-    Timeout timeout;
+
+#if defined(YOTTA_MINAR_VERSION_STRING)
+    minar::callback_handle_t timeoutHandle;
+#endif
 
     /*  Internal variable containing the current MTU size.
     */

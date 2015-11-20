@@ -79,9 +79,9 @@ public:
         uuid = _uuid;
         connectionHandle = _connectionHandle;
 
-        writeDoneHandler.attach(object, member);
+        readyHandler.attach(object, member);
 
-        ble.init(this, &BlockTransferClient::initDone);
+        BLE::Instance().init(this, &BlockTransferClient::initDone);
     }
 
     /*  Read
@@ -173,7 +173,6 @@ private:
     void fragmentTimeout(void);
 
 private:
-    BLE ble;
     UUID uuid;
     Gap::Handle_t connectionHandle;
 
@@ -204,7 +203,10 @@ private:
         Note: if the BLE stack is working properly, fragments should never be missing.
     */
     IndexSet<MAX_INDEX_SET_SIZE> missingFragments;
-    Timeout timeout;
+
+#if defined(YOTTA_MINAR_VERSION_STRING)
+    minar::callback_handle_t timeoutHandle;
+#endif
 
     /*  Internal variable containing the current MTU size.
     */

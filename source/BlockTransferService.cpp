@@ -18,8 +18,8 @@
 
 #if 0
 // increase timeout
-#undef FRAGMENT_TIMEOUT_US
-#define FRAGMENT_TIMEOUT_US (1000*1000)
+#undef FRAGMENT_TIMEOUT_MS
+#define FRAGMENT_TIMEOUT_MS (1000)
 #define BLE_DEBUG(...) { printf(__VA_ARGS__); }
 #else
 #define BLE_DEBUG(...) /* nothing */
@@ -32,8 +32,7 @@ const uint16_t ServiceWriteCharacteristicShortUUID = 0x0001;
 const uint16_t ServiceReadCharacteristicShortUUID  = 0x0002;
 
 BlockTransferService::BlockTransferService()
-    :   ble(),
-        connectionHandle(BTS_INVALID_HANDLE),
+    :   connectionHandle(BTS_INVALID_HANDLE),
         connectionCounter(0),
         readRequestHandler(),
         writeDoneHandler(),
@@ -50,6 +49,7 @@ BlockTransferService::BlockTransferService()
         receiveLengthOffset(0),
         receiveFragmentOffset(0),
         receiveTotalFragments(0),
+        timeoutHandle(NULL),
         currentMTU(BTS_MTU_SIZE_DEFAULT),
         maxBlockPayloadSize(BTS_MTU_SIZE_DEFAULT - BLOCK_HEADER_SIZE),
         maxDirectReadPayloadSize(BTS_MTU_SIZE_DEFAULT - DIRECT_READ_HEADER_SIZE),
@@ -63,11 +63,15 @@ void BlockTransferService::init(UUID _uuid,
     uuid = _uuid;
     securityMode = _securityMode;
 
-    ble.init(this, &BlockTransferService::initDone);
+    BLE::Instance().init(this, &BlockTransferService::initDone);
 }
 
 void BlockTransferService::initDone(BLE::InitializationCompleteCallbackContext* context)
 {
+    (void) context;
+
+    BLE& ble = BLE::Instance();
+
     /*  Enable security.
     */
     ble.securityManager().init();
@@ -155,7 +159,7 @@ ble_error_t BlockTransferService::updateCharacteristicValue(const uint8_t* value
         memcpy(&(payload[1]), value, size);
 
         // send
-        returnValue = ble.gattServer().write(connectionHandle, readFromHandle, payload, payloadLength);
+        returnValue = BLE::Instance().gattServer().write(connectionHandle, readFromHandle, payload, payloadLength);
     }
 
     return returnValue;
@@ -188,7 +192,7 @@ bool BlockTransferService::isReady(void)
 */
 void BlockTransferService::onReadRequest(GattReadAuthCallbackParams* event)
 {
-    BLE_DEBUG("bts: read event: %d\r\n", readState);
+    BLE_DEBUG("bts: read event: %u\r\n", readState);
 
     /*  only respond to requests directed to this Block Transfer handle
     */
@@ -247,7 +251,7 @@ void BlockTransferService::onReadRequest(GattReadAuthCallbackParams* event)
                     */
                     readTotalFragments = (readBlock->getLength() + (maxBlockPayloadSize - 1)) / maxBlockPayloadSize;
 
-                    BLE_DEBUG("bts: read: setup: %d %d %d\r\n", readBlock->getLength(), readTotalFragments, maxBlockPayloadSize);
+                    BLE_DEBUG("bts: read: setup: %lu %lu %d\r\n", readBlock->getLength(), readTotalFragments, maxBlockPayloadSize);
 
                     // update read state and connection handle
                     readState = BT_STATE_SERVER_READ;
@@ -361,7 +365,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                                 writeState = BT_STATE_SERVER_WRITE;
                                 connectionHandle = event->connHandle;
 
-                                BLE_DEBUG("bts: write setup fragments: %d (%d) (%d)\r\n", connectionHandle, receiveTotalFragments, maxBlockPayloadSize);
+                                BLE_DEBUG("bts: write setup fragments: %u (%lu) (%d)\r\n", connectionHandle, receiveTotalFragments, maxBlockPayloadSize);
                             }
                             else
                             {
@@ -419,12 +423,16 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                     {
                         if (writeState == BT_STATE_SERVER_WRITE)
                         {
+#if defined(YOTTA_MINAR_VERSION_STRING)
                             // fragment received, reset timeout
-                            timeout.attach_us(this, &BlockTransferService::fragmentTimeout, FRAGMENT_TIMEOUT_US);
+                            minar::Scheduler::cancelCallback(timeoutHandle);
+                            timeoutHandle = minar::Scheduler::postCallback(this, &BlockTransferService::fragmentTimeout)
+                                            .delay(minar::milliseconds(FRAGMENT_TIMEOUT_MS))
+                                            .getHandle();
+#endif
 
                             /*  Write fragment received and it was expected
                             */
-
                             uint32_t absoluteFragmentIndex;
                             absoluteFragmentIndex = message[2];
                             absoluteFragmentIndex = (absoluteFragmentIndex << 8) | message[1];
@@ -436,7 +444,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                             // check if fragment is a duplicate
                             if (missingFragments.containsIndex(relativeFragmentIndex))
                             {
-                                BLE_DEBUG("\t: %5d %3d : ", absoluteFragmentIndex, relativeFragmentIndex);
+                                BLE_DEBUG("\t: %5ld %3d : ", absoluteFragmentIndex, relativeFragmentIndex);
 #if 0
                                 for (int idx = 0; idx < event->len; idx++)
                                 {
@@ -461,8 +469,11 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                                 */
                                 if (messageType == BT_TYPE_WRITE_PAYLOAD_LAST)
                                 {
+#if defined(YOTTA_MINAR_VERSION_STRING)
                                     // last fragment received, cancel timeout
-                                    timeout.detach();
+                                    minar::Scheduler::cancelCallback(timeoutHandle);
+                                    timeoutHandle = NULL;
+#endif
 
                                     if (missingFragments.getCount() == 0)
                                     {
@@ -513,7 +524,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                                                 // use IndexSet to keep track of the received fragments and find those missing
                                                 missingFragments.setSize(fragments);
 
-                                                BLE_DEBUG("bts: write next batch: %d %d\r\n", receiveFragmentOffset, receiveTotalFragments);
+                                                BLE_DEBUG("bts: write next batch: %lu %lu\r\n", receiveFragmentOffset, receiveTotalFragments);
 
                                                 // request fragments from next batch
                                                 sendWriteRequestMissing();
@@ -571,7 +582,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                             readFragmentIndex = sendFromFragment;
                             readFragmentsInBatch = sendAmount;
 
-                            BLE_DEBUG("bts: read request %d %d %d\r\n", sendFromFragment, sendAmount, readTotalFragments);
+                            BLE_DEBUG("bts: read request %lu %lu %lu\r\n", sendFromFragment, sendAmount, readTotalFragments);
 
                             // send requested fragments
                             sendReadReply();
@@ -644,6 +655,12 @@ void BlockTransferService::onDisconnection(const Gap::DisconnectionCallbackParam
         connectionHandle = BTS_INVALID_HANDLE;
         readState = BT_STATE_READY;
         writeState = BT_STATE_READY;
+
+#if defined(YOTTA_MINAR_VERSION_STRING)
+        // cancel any outstanding timeouts
+        minar::Scheduler::cancelCallback(timeoutHandle);
+        timeoutHandle = NULL;
+#endif
     }
 
     // close state if no connections are available
@@ -689,7 +706,7 @@ void BlockTransferService::sendReadReply(void)
         // send current fragment
         bool result = sendReadReplyRepeatedly();
 
-        BLE_DEBUG("\t: notify : %d %d\r\n", readFragmentIndex, result);
+        BLE_DEBUG("\t: notify : %lu %d\r\n", readFragmentIndex, result);
 
         // update to next fragment if successful
         if (result)
@@ -733,7 +750,7 @@ bool BlockTransferService::sendReadReplyRepeatedly(void)
         readBlock->memcpy(&(payload[3]), processedLength, payloadLength);
 
         // try to send fragment
-        ble_error_t didSendValue = ble.gattServer().write(connectionHandle, readFromHandle, payload, BLOCK_HEADER_SIZE + payloadLength);
+        ble_error_t didSendValue = BLE::Instance().gattServer().write(connectionHandle, readFromHandle, payload, BLOCK_HEADER_SIZE + payloadLength);
 
 BLE_DEBUG("-> %d\r\n", didSendValue);
 
@@ -772,13 +789,17 @@ void BlockTransferService::sendWriteRequestMissing(void)
         request[5] = count >> 8;
         request[6] = count >> 16;
 
-        ble_error_t didSendValue = ble.gattServer().write(connectionHandle, readFromHandle, request, 7);
+        ble_error_t didSendValue = BLE::Instance().gattServer().write(connectionHandle, readFromHandle, request, 7);
         (void) didSendValue;
 
+#if defined(YOTTA_MINAR_VERSION_STRING)
         // set timeout for missing fragments
-        timeout.attach_us(this, &BlockTransferService::fragmentTimeout, FRAGMENT_TIMEOUT_US);
+        timeoutHandle = minar::Scheduler::postCallback(this, &BlockTransferService::fragmentTimeout)
+                        .delay(minar::milliseconds(FRAGMENT_TIMEOUT_MS))
+                        .getHandle();
+#endif
 
-        BLE_DEBUG("bts: write send request: %d: %d %d %d\r\n", connectionHandle, didSendValue, absoluteFragmentIndex, count);
+        BLE_DEBUG("bts: write send request: %u: %d %lu %lu\r\n", connectionHandle, didSendValue, absoluteFragmentIndex, count);
     }
 }
 
@@ -797,7 +818,7 @@ void BlockTransferService::sendWriteAcknowledgement()
     request[5] = 0x00;
     request[6] = 0x00;
 
-    ble_error_t didSendValue = ble.gattServer().write(connectionHandle, readFromHandle, request, 7);
+    ble_error_t didSendValue = BLE::Instance().gattServer().write(connectionHandle, readFromHandle, request, 7);
 
     if (didSendValue == BLE_ERROR_NONE)
     {
@@ -831,6 +852,8 @@ void BlockTransferService::sendWriteAcknowledgement()
 void BlockTransferService::fragmentTimeout(void)
 {
     BLE_DEBUG("bts: timeout\r\n");
+
+    timeoutHandle = NULL;
 
     // request missing fragments
     sendWriteRequestMissing();
