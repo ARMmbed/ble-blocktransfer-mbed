@@ -116,7 +116,7 @@ ble_error_t BlockTransferClient::internalRead(uint32_t length, uint32_t offset)
         if (buffer)
         {
             // allocate reference counted dynamic memory buffer
-            readBlock = SharedPointer<Block>(new BlockDynamic(buffer, length));
+            readBlock = SharedPointer<BlockStatic>(new BlockDynamic(buffer, length));
             readBlock->setOffset(offset);
 
             BLE_DEBUG("btc: read: %lu\r\n", readBlock->getLength());
@@ -347,7 +347,7 @@ void BlockTransferClient::internalSendReadAcknowledgement()
         readDoneHandler.call(readBlock);
 
         // try to free memory
-        readBlock = SharedPointer<Block>();
+        readBlock = SharedPointer<BlockStatic>();
     }
     else
     {
@@ -458,7 +458,7 @@ void BlockTransferClient::readCallback(const GattReadCallbackParams* params)
                     readDoneHandler.call(readBlock);
 
                     // try to free memory
-                    readBlock = SharedPointer<Block>();
+                    readBlock = SharedPointer<BlockStatic>();
                 }
                 break;
 
@@ -607,7 +607,7 @@ void BlockTransferClient::hvxCallback(const GattHVXCallbackParams* params)
                         if (buffer)
                         {
                             // allocate reference counted dynamic memory buffer
-                            SharedPointer<Block> block(new BlockDynamic(buffer, bufferLength));
+                            SharedPointer<BlockStatic> block(new BlockDynamic(buffer, bufferLength));
 
                             // copy notification to buffer
                             block->memcpy(0, &(message[DIRECT_READ_HEADER_SIZE]), bufferLength);

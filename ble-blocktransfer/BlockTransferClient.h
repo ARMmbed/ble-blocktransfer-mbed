@@ -86,7 +86,7 @@ public:
 
     /*  Read
     */
-    ble_error_t read(uint32_t length, uint32_t offset, void (*readDone)(SharedPointer<Block>))
+    ble_error_t read(uint32_t length, uint32_t offset, void (*readDone)(SharedPointer<BlockStatic>))
     {
         readDoneHandler.attach(readDone);
 
@@ -94,7 +94,7 @@ public:
     }
 
     template <typename T>
-    ble_error_t read(uint32_t length, uint32_t offset, T* object, void (T::*member)(SharedPointer<Block>))
+    ble_error_t read(uint32_t length, uint32_t offset, T* object, void (T::*member)(SharedPointer<BlockStatic>))
     {
         readDoneHandler.attach(object, member);
 
@@ -120,13 +120,13 @@ public:
 
     /*  Notications
     */
-    void onNotification(void (*_notificationHandler)(SharedPointer<Block>))
+    void onNotification(void (*_notificationHandler)(SharedPointer<BlockStatic>))
     {
         notificationHandler.attach(_notificationHandler);
     }
 
     template <typename T>
-    void onNotification(T* object, void (T::*member)(SharedPointer<Block>))
+    void onNotification(T* object, void (T::*member)(SharedPointer<BlockStatic>))
     {
         notificationHandler.attach(object, member);
     }
@@ -176,16 +176,16 @@ private:
     UUID uuid;
     Gap::Handle_t connectionHandle;
 
-    FunctionPointerWithContext<SharedPointer<Block> > readDoneHandler;
-    FunctionPointerWithContext<SharedPointer<Block> > writeDoneHandler;
-    FunctionPointerWithContext<SharedPointer<Block> > notificationHandler;
+    FunctionPointerWithContext<SharedPointer<BlockStatic> > readDoneHandler;
+    FunctionPointerWithContext<SharedPointer<Block> >       writeDoneHandler;
+    FunctionPointerWithContext<SharedPointer<BlockStatic> > notificationHandler;
     FunctionPointer readyHandler;
 
     DiscoveredCharacteristic readCharacteristic;
     DiscoveredCharacteristic writeCharacteristic;
 
-    SharedPointer<Block> writeBlock;
-    SharedPointer<Block> readBlock;
+    SharedPointer<Block>       writeBlock;
+    SharedPointer<BlockStatic> readBlock;
 
     /*  Internal variables for keeping track of outgoing fragments in a batch.
     */

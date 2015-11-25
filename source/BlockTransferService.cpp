@@ -104,7 +104,7 @@ void BlockTransferService::initDone(BLE::InitializationCompleteCallbackContext* 
 
     The function is called when a block of data has been written to the write buffer.
 */
-void BlockTransferService::setWriteAuthorizationCallback(void (*writeHandler)(SharedPointer<Block>))
+void BlockTransferService::setWriteAuthorizationCallback(void (*writeHandler)(SharedPointer<BlockStatic>))
 {
     /*  Guard against resetting callback and write block while in the middle of a transfer. */
     if ((writeState == BT_STATE_OFF) || (writeState == BT_STATE_READY))
@@ -359,7 +359,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                             if (buffer)
                             {
                                 // allocate reference counted dynamic memory buffer
-                                writeBlock = SharedPointer<Block>(new BlockDynamic(buffer, bufferLength));
+                                writeBlock = SharedPointer<BlockStatic>(new BlockDynamic(buffer, bufferLength));
 
                                 // enter write state and store connection handle
                                 writeState = BT_STATE_SERVER_WRITE;
@@ -398,7 +398,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                         if (buffer)
                         {
                             // allocate reference counted dynamic memory buffer
-                            SharedPointer<Block> block(new BlockDynamic(buffer, payloadLength));
+                            SharedPointer<BlockStatic> block(new BlockDynamic(buffer, payloadLength));
 
                             // set offset of the current block with regards to the overall characteristic
                             uint32_t offset;
@@ -492,7 +492,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
 
                                             // Clear shared pointer. This will free the previous
                                             // writeBlock's memory if it is no longer in use
-                                            writeBlock = SharedPointer<Block>();
+                                            writeBlock = SharedPointer<BlockStatic>();
 
                                             // update length offset
                                             receiveLengthOffset += processedLength + currentPayloadLength;
@@ -519,7 +519,7 @@ void BlockTransferService::onDataWritten(const GattWriteCallbackParams* event)
                                             if (buffer)
                                             {
                                                 // allocate reference counted dynamic memory buffer
-                                                writeBlock = SharedPointer<Block>(new BlockDynamic(buffer, bufferLength));
+                                                writeBlock = SharedPointer<BlockStatic>(new BlockDynamic(buffer, bufferLength));
 
                                                 // use IndexSet to keep track of the received fragments and find those missing
                                                 missingFragments.setSize(fragments);
@@ -838,7 +838,7 @@ void BlockTransferService::sendWriteAcknowledgement()
 
         // Clear shared pointer. This will free the previous
         // writeBlock's memory if it is no longer in use
-        writeBlock = SharedPointer<Block>();
+        writeBlock = SharedPointer<BlockStatic>();
     }
     else
     {

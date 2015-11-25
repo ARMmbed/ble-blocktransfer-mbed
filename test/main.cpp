@@ -117,7 +117,7 @@ void blockServerReadDoneHandler()
 /*
     Function called when data has been written over BLE.
 */
-void blockServerWriteHandler(SharedPointer<Block> block)
+void blockServerWriteHandler(SharedPointer<BlockStatic> block)
 {
     printf("main: block write: length: %4lu offset: %6lu time: %3d ms\r\n", block->getLength(), block->getOffset(), watch.read_ms());
 
@@ -162,7 +162,7 @@ void clientWriteDone(SharedPointer<Block> block)
 /*
     Handler called when Block Transfer Client Read completes.
 */
-void clientReadDone(SharedPointer<Block> block)
+void clientReadDone(SharedPointer<BlockStatic> block)
 {
     printf("main: read done\r\n");
 
@@ -208,7 +208,7 @@ void clientReadDone(SharedPointer<Block> block)
 
     Write to server is complete, and server signals that there is data to read.
 */
-void clientNotification(SharedPointer<Block> block)
+void clientNotification(SharedPointer<BlockStatic> block)
 {
     printf("main: client notification\r\n");
     (void) block;

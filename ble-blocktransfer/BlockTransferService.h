@@ -69,10 +69,10 @@ public:
     *                               Block pointer or swap it with a different one for better
     *                               memory management.
     */
-    void setWriteAuthorizationCallback(void (*writeHandler)(SharedPointer<Block>));
+    void setWriteAuthorizationCallback(void (*writeHandler)(SharedPointer<BlockStatic>));
 
     template <typename T>
-    void setWriteAuthorizationCallback(T* object, void (T::*member)(SharedPointer<Block>))
+    void setWriteAuthorizationCallback(T* object, void (T::*member)(SharedPointer<BlockStatic>))
     {
         /*  Guard against resetting callback and write block while in the middle of a transfer. */
         if (writeState == BT_STATE_READY)
@@ -174,13 +174,13 @@ private:
 
     /*  Handles for callback functions.
     */
-    FunctionPointerWithContextAndReturnValue<uint32_t, SharedPointer<Block> >   readRequestHandler;
-    FunctionPointerWithContext<SharedPointer<Block> >                           writeDoneHandler;
-    FunctionPointer                                                             readDoneHandler;
+    FunctionPointerWithContextAndReturnValue<uint32_t, SharedPointer<Block> > readRequestHandler;
+    FunctionPointerWithContext<SharedPointer<BlockStatic> >                   writeDoneHandler;
+    FunctionPointer                                                           readDoneHandler;
 
     /*  Pointer to a data structure which contains the writeTo (receive) buffer.
     */
-    SharedPointer<Block> writeBlock;
+    SharedPointer<BlockStatic> writeBlock;
 
     /*  BLE characteristics the block transfer is built upon.
     */
