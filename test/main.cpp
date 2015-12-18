@@ -323,7 +323,7 @@ void advertisementCallback(const Gap::AdvertisementCallbackParams_t* params)
         fast.slaveLatency = 0;
 
         // connect to peripheral, this stops the scanning
-        BLE::Instance().gap().connect(params->peerAddr, Gap::ADDR_TYPE_RANDOM_STATIC, &fast, NULL);
+        BLE::Instance().gap().connect(params->peerAddr, BLEProtocol::AddressType::RANDOM_STATIC, &fast, NULL);
     }
 }
 
